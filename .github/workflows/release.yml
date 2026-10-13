@@ -1,13 +1,22 @@
 name: Release
 
-# Push a tag like `v0.0.1` to build installers for Windows, macOS and Linux
-# and publish them as a GitHub release.
+# Push a tag like `v0.0.1` (or run this workflow by hand with a tag name) to
+# build installers for Windows, macOS and Linux and publish them as a GitHub
+# release.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release, e.g. v0.0.1 (created on the selected branch if missing)
+        required: true
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release:
@@ -36,9 +45,9 @@ jobs:
           Read-aloud downloads the Piper engine (~25 MB) and a voice (20–100 MB)
           on first use, from the Voices view.
           NOTES
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" \
-              --title "Marginalia $GITHUB_REF_NAME" --notes-file notes.md
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --target "$GITHUB_SHA" \
+              --title "Marginalia $TAG" --notes-file notes.md
 
   app:
     name: App (${{ matrix.name }})
@@ -113,7 +122,7 @@ jobs:
               exit 1
             fi
             cp "${files[0]}" "${parts[i+1]}"
-            gh release upload "$GITHUB_REF_NAME" "${parts[i+1]}" --clobber
+            gh release upload "$TAG" "${parts[i+1]}" --clobber
           done
 
   cli:
@@ -163,4 +172,4 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" "$ASSET" --clobber
+        run: gh release upload "$TAG" "$ASSET" --clobber
