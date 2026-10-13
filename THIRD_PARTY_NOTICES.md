@@ -14,6 +14,10 @@ components below; all of their licenses are compatible with the GPL-3.0.
 | [epub](https://github.com/danigm/epub-rs) | EPUB parsing | GPL-3.0 |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | speech synthesis runtime | Apache-2.0 |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | neural network inference | MIT |
+| [VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) © Phạm Nguyễn Ngọc Bảo | the VieNeu voice pipeline in `crates/marginalia-tts/src/vieneu/` is a Rust port of its ONNX engines (`onnx_runtime_lite.py`, `v3nano.py`) and text chunking/pause helpers, modified to fit Marginalia | Apache-2.0 |
+| [sea-g2p](https://github.com/pnnbao97/sea-g2p) © Phạm Nguyễn Ngọc Bảo | Vietnamese text normalization and phonemes for VieNeu voices (its dictionary is downloaded with the voice) | Apache-2.0 |
+| [ort](https://github.com/pykeio/ort) | ONNX Runtime bindings for VieNeu voices | MIT OR Apache-2.0 |
+| [tokenizers](https://github.com/huggingface/tokenizers) | VieNeu Turbo tokenizer | Apache-2.0 |
 | [piper-phonemize](https://github.com/rhasspy/piper-phonemize) | phonemizer (via sherpa-onnx) | MIT |
 | kaldi-native-fbank, kaldi-decoder, kaldifst, OpenFst, SentencePiece | parts of sherpa-onnx | Apache-2.0 |
 | KISS FFT | part of sherpa-onnx | BSD-3-Clause |
@@ -32,3 +36,8 @@ Each keeps its own license, which applies to your use of it:
 - Kokoro: Apache-2.0.
 - Supertonic 3: MIT (code) and OpenRAIL-M (weights), which forbids certain
   harmful uses.
+- VieNeu-TTS v3 Turbo and v3 Nano (pnnbao-ump on Hugging Face), the MOSS
+  Audio Tokenizer Nano codec (OpenMOSS-Team) and the sea-g2p dictionary:
+  Apache-2.0.
+
+The Apache License 2.0 text is at <https://www.apache.org/licenses/LICENSE-2.0>.

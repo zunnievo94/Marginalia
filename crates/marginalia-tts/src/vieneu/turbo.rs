@@ -151,6 +151,7 @@ pub(crate) struct Turbo {
     anchor: Option<Vec<f32>>,
     ref_codes: Vec<Vec<i64>>,
     rng: Rng,
+    temperature: f32,
 }
 
 impl Turbo {
@@ -250,6 +251,7 @@ impl Turbo {
             anchor,
             ref_codes,
             rng: Rng::new(),
+            temperature: TEMPERATURE,
         })
     }
 
@@ -326,7 +328,7 @@ impl Turbo {
                 }
             }
         }
-        sample_top_k_p(&mut logits, TEMPERATURE, TOP_K, TOP_P, &mut self.rng)
+        sample_top_k_p(&mut logits, self.temperature, TOP_K, TOP_P, &mut self.rng)
     }
 
     /// One audio frame from the backbone's hidden state (`_acoustic_frame`):
@@ -791,6 +793,25 @@ mod tests {
             let ids = tok.encode(line, false).unwrap();
             let ids: Vec<String> = ids.get_ids().iter().map(u32::to_string).collect();
             println!("IDS\t{}", ids.join(" "));
+        }
+    }
+
+    /// Greedy frames for the phonemes in `$VIENEU_TEST_PHONES` with the
+    /// installed Turbo model in `$VIENEU_TEST_DIR`, voice "Hải Đăng"; with
+    /// sampling off they must equal the Python engine's.
+    #[test]
+    #[ignore]
+    fn greedy_frames() {
+        let dir = std::env::var("VIENEU_TEST_DIR").unwrap();
+        let mut t = Turbo::new(Path::new(&dir), "Hải Đăng").unwrap();
+        t.temperature = 0.0;
+        let phones = std::fs::read_to_string(std::env::var("VIENEU_TEST_PHONES").unwrap()).unwrap();
+        let rows = t.build_rows(phones.trim()).unwrap();
+        let prompt = t.embed_rows(&rows).unwrap();
+        let frames = t.generate(&prompt, rows.len(), 300).unwrap();
+        for f in frames {
+            let f: Vec<String> = f.iter().map(i64::to_string).collect();
+            println!("FRAME\t{}", f.join(" "));
         }
     }
 

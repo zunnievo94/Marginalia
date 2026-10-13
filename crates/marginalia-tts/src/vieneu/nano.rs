@@ -84,6 +84,9 @@ pub(crate) struct Nano {
     style: (Vec<usize>, Vec<f32>),
     speed: f32,
     rng: Rng,
+    /// Starting noise to use instead of random draws (tests compare the
+    /// output with the Python engine's for the same noise).
+    fixed_noise: Option<Vec<f32>>,
 }
 
 impl Nano {
@@ -156,6 +159,7 @@ impl Nano {
             style,
             speed: speed.clamp(0.5, 2.0),
             rng: Rng::new(),
+            fixed_noise: None,
         })
     }
 
@@ -196,7 +200,10 @@ impl Nano {
         let secs = (log_s.exp() / self.speed.max(1e-3)).min(MAX_CHUNK_SECONDS);
         let frames = ((secs * self.fps).round() as usize).max(MIN_FRAMES);
 
-        let mut x: Vec<f32> = (0..LATENT * frames).map(|_| self.rng.normal()).collect();
+        let mut x: Vec<f32> = match self.fixed_noise.take() {
+            Some(x) if x.len() == LATENT * frames => x,
+            _ => (0..LATENT * frames).map(|_| self.rng.normal()).collect(),
+        };
         let shape = [1, LATENT, frames];
         let null_mask = tensor(&[1, 2], vec![true; 2])?;
         let null_spk = tensor(&[1, self.null_spk.len()], self.null_spk.clone())?;
@@ -268,5 +275,37 @@ impl Nano {
             parts.push((wav, super::pause_after(&chunk)));
         }
         Ok(super::join(&parts, SAMPLE_RATE))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Synthesizes the phonemes in `$VIENEU_TEST_PHONES` with the installed
+    /// Nano model in `$VIENEU_TEST_DIR` (voice "Minh Quân"), starting from
+    /// the noise in `$VIENEU_TEST_NOISE` (raw little-endian f32), and writes
+    /// the samples to `$VIENEU_TEST_OUT` for comparison with Python.
+    #[test]
+    #[ignore]
+    fn fixed_noise_output() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let mut n = Nano::new(Path::new(&var("VIENEU_TEST_DIR")), "Minh Quân", 1.0).unwrap();
+        let noise = std::fs::read(var("VIENEU_TEST_NOISE")).unwrap();
+        n.fixed_noise = Some(
+            noise
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .collect(),
+        );
+        let wav = n
+            .infer(
+                std::fs::read_to_string(var("VIENEU_TEST_PHONES"))
+                    .unwrap()
+                    .trim(),
+            )
+            .unwrap();
+        let bytes: Vec<u8> = wav.iter().flat_map(|x| x.to_le_bytes()).collect();
+        std::fs::write(var("VIENEU_TEST_OUT"), bytes).unwrap();
     }
 }
