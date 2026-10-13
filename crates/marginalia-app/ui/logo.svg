@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Marginalia</title>
+  <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26324F"/>
+      <stop offset="1" stop-color="#171E33"/>
+    </linearGradient>
+  </defs>
+  <!-- ink background -->
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="url(#ink)"/>
+  <g transform="rotate(-6 512 512)">
+    <!-- page shadow and page -->
+    <rect x="250" y="178" width="524" height="700" rx="30" fill="#000" opacity="0.28"/>
+    <rect x="244" y="160" width="524" height="700" rx="30" fill="#F5EEDC"/>
+    <!-- highlighted sentence, like the reader's read-aloud highlight -->
+    <rect x="404" y="380" width="300" height="44" rx="10" fill="#F2B84B" opacity="0.75"/>
+    <!-- lines of text -->
+    <g stroke="#8E97AA" stroke-width="18" stroke-linecap="round">
+      <line x1="414" y1="262" x2="704" y2="262"/>
+      <line x1="414" y1="322" x2="670" y2="322"/>
+      <line x1="414" y1="402" x2="694" y2="402" stroke="#4A4F5C"/>
+      <line x1="414" y1="482" x2="704" y2="482"/>
+      <line x1="414" y1="542" x2="640" y2="542"/>
+      <line x1="414" y1="622" x2="704" y2="622"/>
+      <line x1="414" y1="682" x2="684" y2="682"/>
+      <line x1="414" y1="742" x2="560" y2="742"/>
+    </g>
+    <!-- the margin rule -->
+    <line x1="364" y1="160" x2="364" y2="860" stroke="#D2553D" stroke-width="10"/>
+    <!-- the marginal note: a hand-drawn sound wave -->
+    <path d="M304 250
+             C 318 268, 318 284, 304 302
+             C 280 330, 280 360, 304 388
+             C 336 420, 336 456, 304 488
+             C 268 522, 268 562, 304 596
+             C 330 622, 330 650, 304 676
+             C 290 690, 290 704, 304 718"
+          fill="none" stroke="#D2553D" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

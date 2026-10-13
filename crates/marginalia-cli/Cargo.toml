@@ -1,0 +1,22 @@
+[package]
+name = "marginalia-cli"
+description = "Marginalia command-line ebook reader with text-to-speech"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "marginalia"
+path = "src/main.rs"
+
+[features]
+default = ["playback"]
+playback = ["marginalia-tts/playback"]
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+marginalia-core.workspace = true
+marginalia-tts.workspace = true

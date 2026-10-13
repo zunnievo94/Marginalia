@@ -1,0 +1,534 @@
+//! Marginalia desktop app (Tauri). The UI lives in `../ui` as plain
+//! HTML/CSS/JS; this file exposes the reader and TTS to it as commands.
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod notes;
+mod speech;
+mod store;
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use marginalia_core::text::sentences_or_whole;
+use marginalia_core::{Block, Book};
+use marginalia_tts::catalog::{self, InstalledVoice};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
+
+use store::{Entry, Library, Position, Settings};
+
+type CmdResult<T> = Result<T, String>;
+
+fn err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+#[derive(Default)]
+struct AppState {
+    library: Mutex<Library>,
+    settings: Mutex<Settings>,
+    /// The open book, parsed once and shared with the speech thread.
+    open: Mutex<Option<(String, Arc<Book>)>>,
+    speech: speech::Speech,
+}
+
+impl AppState {
+    fn book(&self, id: &str) -> CmdResult<Arc<Book>> {
+        let mut open = self.open.lock().unwrap();
+        if let Some((open_id, book)) = open.as_ref() {
+            if open_id == id {
+                return Ok(book.clone());
+            }
+        }
+        let path = self
+            .library
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|e| e.path.clone())
+            .ok_or("This book is no longer in the library.")?;
+        let book = Arc::new(marginalia_core::open(&path).map_err(err)?);
+        *open = Some((id.to_string(), book.clone()));
+        Ok(book)
+    }
+}
+
+// ---------------------------------------------------------------- library
+
+#[derive(Serialize)]
+struct AddResult {
+    added: Vec<Entry>,
+    errors: Vec<String>,
+}
+
+#[tauri::command]
+fn library_list(state: State<AppState>) -> Vec<Entry> {
+    state.library.lock().unwrap().sorted()
+}
+
+#[tauri::command]
+fn library_add(state: State<AppState>, paths: Vec<PathBuf>) -> CmdResult<AddResult> {
+    let mut added = Vec::new();
+    let mut errors = Vec::new();
+    for path in paths {
+        let id = Library::id_for(&path);
+        if let Some(existing) = state.library.lock().unwrap().get(&id) {
+            added.push(existing.clone());
+            continue;
+        }
+        match marginalia_core::open(&path) {
+            Ok(book) => {
+                let name = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let title = if book.metadata.title.trim().is_empty() {
+                    name
+                } else {
+                    book.metadata.title.clone()
+                };
+                let entry = Entry {
+                    id,
+                    path: path.clone(),
+                    title,
+                    authors: book.metadata.authors.clone(),
+                    language: book.metadata.language.clone(),
+                    format: format!("{:?}", book.format).to_uppercase(),
+                    chapters: book.chapters.len(),
+                    added: store::now(),
+                    last_opened: None,
+                    position: Position::default(),
+                    progress: 0.0,
+                    has_cover: false,
+                };
+                let mut entry = entry;
+                entry.has_cover = save_cover(&entry.id, &book);
+                state.library.lock().unwrap().books.push(entry.clone());
+                added.push(entry);
+            }
+            Err(e) => errors.push(format!(
+                "{}: {e}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )),
+        }
+    }
+    state.library.lock().unwrap().save().map_err(err)?;
+    Ok(AddResult { added, errors })
+}
+
+#[tauri::command]
+async fn library_pick(app: AppHandle, state: State<'_, AppState>) -> CmdResult<AddResult> {
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Open books")
+        .add_filter("Ebooks", &["epub", "mobi", "prc", "azw", "azw3", "pdb"])
+        .blocking_pick_files()
+        .unwrap_or_default();
+    let paths = picked
+        .into_iter()
+        .filter_map(|p| p.into_path().ok())
+        .collect();
+    library_add(state, paths)
+}
+
+#[tauri::command]
+fn library_remove(state: State<AppState>, id: String) -> CmdResult<()> {
+    let mut lib = state.library.lock().unwrap();
+    lib.books.retain(|b| b.id != id);
+    if let Ok(dir) = covers_dir() {
+        let _ = std::fs::remove_file(dir.join(&id));
+    }
+    lib.save().map_err(err)
+}
+
+// ------------------------------------------------------------------ books
+
+#[derive(Serialize)]
+struct TocItem {
+    title: String,
+    words: usize,
+    images: bool,
+}
+
+#[derive(Serialize)]
+struct BookView {
+    entry: Entry,
+    toc: Vec<TocItem>,
+}
+
+#[tauri::command]
+fn book_open(state: State<AppState>, id: String) -> CmdResult<BookView> {
+    let book = state.book(&id)?;
+    let mut lib = state.library.lock().unwrap();
+    let entry = lib.get_mut(&id).ok_or("unknown book")?;
+    entry.last_opened = Some(store::now());
+    entry.chapters = book.chapters.len();
+    entry.has_cover = save_cover(&id, &book);
+    let entry = entry.clone();
+    lib.save().map_err(err)?;
+    let toc = book
+        .chapters
+        .iter()
+        .map(|c| TocItem {
+            title: c.title.clone(),
+            words: marginalia_core::text::word_count(&c.text),
+            images: c.has_images(),
+        })
+        .collect();
+    Ok(BookView { entry, toc })
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum BlockView {
+    /// A paragraph split into sentences, the units read aloud.
+    Text { sentences: Vec<String> },
+    /// An image, served at `mgimg://localhost/<book id>/<image>`.
+    Image { image: usize, alt: String },
+}
+
+#[tauri::command]
+fn chapter_get(state: State<AppState>, id: String, index: usize) -> CmdResult<Vec<BlockView>> {
+    let book = state.book(&id)?;
+    let chapter = book.chapters.get(index).ok_or("chapter out of range")?;
+    Ok(chapter
+        .blocks
+        .iter()
+        .map(|b| match b {
+            Block::Text(t) => BlockView::Text {
+                sentences: sentences_or_whole(t),
+            },
+            Block::Image { image, alt } => BlockView::Image {
+                image: *image,
+                alt: alt.clone(),
+            },
+        })
+        .collect())
+}
+
+fn covers_dir() -> anyhow::Result<PathBuf> {
+    Ok(marginalia_tts::paths::data_dir()?.join("covers"))
+}
+
+/// Keep a copy of the cover so the library can show it without parsing
+/// every book.
+fn save_cover(id: &str, book: &Book) -> bool {
+    let Some(cover) = book.cover_image() else {
+        return false;
+    };
+    let Ok(dir) = covers_dir() else { return false };
+    let path = dir.join(id);
+    path.exists()
+        || (std::fs::create_dir_all(&dir).is_ok() && std::fs::write(path, &cover.data).is_ok())
+}
+
+/// Serves book images and library covers to the webview:
+/// `mgimg://localhost/<book id>/<image index>` and `mgimg://localhost/cover/<book id>`.
+fn serve_image(app: &AppHandle, path: &str) -> Option<(String, Vec<u8>)> {
+    let mut parts = path.trim_start_matches('/').split('/');
+    let (first, second) = (parts.next()?, parts.next()?);
+    if first == "cover" {
+        let data = std::fs::read(covers_dir().ok()?.join(second)).ok()?;
+        let mime = marginalia_core::sniff_image(&data).unwrap_or("application/octet-stream");
+        return Some((mime.to_string(), data));
+    }
+    let state = app.state::<AppState>();
+    let book = state.book(first).ok()?;
+    let image = book.images.get(second.parse::<usize>().ok()?)?;
+    Some((image.media_type.clone(), image.data.clone()))
+}
+
+#[tauri::command]
+fn position_save(
+    state: State<AppState>,
+    id: String,
+    position: Position,
+    progress: f32,
+) -> CmdResult<()> {
+    let mut lib = state.library.lock().unwrap();
+    if let Some(e) = lib.get_mut(&id) {
+        if e.position != position {
+            e.position = position;
+            e.progress = progress.clamp(0.0, 1.0);
+            lib.save().map_err(err)?;
+        }
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ notes
+
+#[tauri::command]
+fn notes_list(id: String) -> Vec<notes::Note> {
+    notes::load(&id)
+}
+
+#[tauri::command]
+fn note_save(id: String, note: notes::Note) -> CmdResult<notes::Note> {
+    notes::save(&id, note).map_err(err)
+}
+
+#[tauri::command]
+fn note_delete(id: String, note_id: String) -> CmdResult<()> {
+    notes::delete(&id, &note_id).map_err(err)
+}
+
+/// Save the book's notes as a Markdown file chosen by the user.
+#[tauri::command]
+async fn notes_export(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CmdResult<Option<String>> {
+    let book = state.book(&id)?;
+    let titles: Vec<String> = book.chapters.iter().map(|c| c.title.clone()).collect();
+    let title = state
+        .library
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(|e| e.title.clone())
+        .unwrap_or_else(|| book.metadata.title.clone());
+    let md = notes::to_markdown(&title, &book.metadata.authors, &titles, &notes::load(&id));
+    let file_name: String = format!("{title} - notes.md")
+        .chars()
+        .map(|c| if "/\\:*?\"<>|".contains(c) { '_' } else { c })
+        .collect();
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("Export notes")
+        .set_file_name(&file_name)
+        .add_filter("Markdown", &["md"])
+        .blocking_save_file()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    std::fs::write(&path, md).map_err(err)?;
+    Ok(Some(path.display().to_string()))
+}
+
+// --------------------------------------------------------------- settings
+
+#[tauri::command]
+fn settings_get(state: State<AppState>) -> Settings {
+    state.settings.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn settings_set(state: State<AppState>, settings: Settings) -> CmdResult<()> {
+    settings.save().map_err(err)?;
+    *state.settings.lock().unwrap() = settings;
+    Ok(())
+}
+
+// ------------------------------------------------------------------- TTS
+
+#[tauri::command]
+fn tts_play(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+    position: Position,
+) -> CmdResult<()> {
+    let book = state.book(&id)?;
+    let settings = state.settings.lock().unwrap().clone();
+    state.speech.play(app, id, book, position, settings);
+    Ok(())
+}
+
+#[tauri::command]
+fn tts_pause(app: AppHandle, state: State<AppState>) {
+    state.speech.pause(&app);
+}
+
+#[tauri::command]
+fn tts_resume(app: AppHandle, state: State<AppState>) {
+    state.speech.resume(&app);
+}
+
+#[tauri::command]
+fn tts_stop(app: AppHandle, state: State<AppState>) {
+    state.speech.stop();
+    let _ = app.emit(
+        "tts-state",
+        speech::StateEvent {
+            state: "stopped",
+            error: None,
+            voice: None,
+        },
+    );
+}
+
+#[derive(Serialize)]
+struct EngineStatus {
+    piper: Option<String>,
+    espeak: Option<String>,
+    piper_supported: bool,
+    installed: Vec<String>,
+    data_dir: String,
+}
+
+#[tauri::command]
+fn engine_status() -> CmdResult<EngineStatus> {
+    Ok(EngineStatus {
+        piper: marginalia_tts::piper::find_executable().map(|p| p.display().to_string()),
+        espeak: marginalia_tts::espeak::find_executable().map(|p| p.display().to_string()),
+        piper_supported: marginalia_tts::piper::release_asset().is_some(),
+        installed: InstalledVoice::list()
+            .map_err(err)?
+            .into_iter()
+            .map(|v| v.key)
+            .collect(),
+        data_dir: marginalia_tts::paths::data_dir()
+            .map_err(err)?
+            .display()
+            .to_string(),
+    })
+}
+
+#[derive(Clone, Serialize)]
+struct Progress {
+    key: String,
+    done: u64,
+    total: Option<u64>,
+}
+
+fn progress_emitter(app: &AppHandle, key: &str) -> impl FnMut(u64, Option<u64>) {
+    let app = app.clone();
+    let key = key.to_string();
+    let mut last = 0u64;
+    move |done, total| {
+        // Throttle to ~every 256 KB to keep the IPC channel quiet.
+        if done.saturating_sub(last) >= 256 * 1024 || Some(done) == total {
+            last = done;
+            let _ = app.emit(
+                "download-progress",
+                Progress {
+                    key: key.clone(),
+                    done,
+                    total,
+                },
+            );
+        }
+    }
+}
+
+#[tauri::command]
+async fn engine_install(app: AppHandle) -> CmdResult<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut progress = progress_emitter(&app, "piper");
+        marginalia_tts::piper::install(&mut progress).map(|p| p.display().to_string())
+    })
+    .await
+    .map_err(err)?
+    .map_err(|e| format!("{e:#}"))
+}
+
+#[derive(Serialize)]
+struct VoiceInfo {
+    key: String,
+    language_code: String,
+    language: String,
+    country: String,
+    quality: String,
+    speakers: u32,
+    size: u64,
+    installed: bool,
+}
+
+#[tauri::command]
+async fn voices_catalog(refresh: bool) -> CmdResult<Vec<VoiceInfo>> {
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Vec<VoiceInfo>> {
+        let installed: Vec<String> = InstalledVoice::list()?.into_iter().map(|v| v.key).collect();
+        Ok(catalog::load(refresh)?
+            .into_iter()
+            .map(|v| VoiceInfo {
+                installed: installed.contains(&v.key),
+                size: v.download_size(),
+                key: v.key,
+                language_code: v.language.code,
+                language: v.language.name_english,
+                country: v.language.country_english,
+                quality: v.quality,
+                speakers: v.num_speakers,
+            })
+            .collect())
+    })
+    .await
+    .map_err(err)?
+    .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn voice_download(app: AppHandle, key: String) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<()> {
+        let voices = catalog::load(false)?;
+        let voice = catalog::find(&voices, &key)?;
+        voice.download(&mut progress_emitter(&app, &key))?;
+        Ok(())
+    })
+    .await
+    .map_err(err)?
+    .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn voice_remove(key: String) -> CmdResult<()> {
+    match InstalledVoice::find(&key).map_err(err)? {
+        Some(v) => v.remove().map_err(err),
+        None => Ok(()),
+    }
+}
+
+fn main() {
+    let state = AppState {
+        library: Mutex::new(Library::load()),
+        settings: Mutex::new(Settings::load()),
+        ..AppState::default()
+    };
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .register_uri_scheme_protocol("mgimg", |ctx, request| {
+            let builder = tauri::http::Response::builder();
+            match serve_image(ctx.app_handle(), request.uri().path()) {
+                Some((mime, data)) => builder
+                    .header("Content-Type", mime)
+                    .header("Cache-Control", "max-age=3600")
+                    .body(data),
+                None => builder.status(404).body(Vec::new()),
+            }
+            .expect("valid response")
+        })
+        .manage(state)
+        .invoke_handler(tauri::generate_handler![
+            library_list,
+            library_add,
+            library_pick,
+            library_remove,
+            book_open,
+            chapter_get,
+            position_save,
+            notes_list,
+            note_save,
+            note_delete,
+            notes_export,
+            settings_get,
+            settings_set,
+            tts_play,
+            tts_pause,
+            tts_resume,
+            tts_stop,
+            engine_status,
+            engine_install,
+            voices_catalog,
+            voice_download,
+            voice_remove,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Marginalia");
+}

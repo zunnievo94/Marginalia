@@ -1,0 +1,3 @@
+/target
+*.wav
+/crates/marginalia-app/gen
