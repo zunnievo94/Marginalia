@@ -1,0 +1,143 @@
+name: Release
+
+# Push a tag like `v0.0.1` to build installers for Windows, macOS and Linux
+# and publish them as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > notes.md <<'NOTES'
+          Early test build of Marginalia, an EPUB/MOBI/PRC reader that can read books aloud.
+
+          **Downloads**
+          - **Windows**: `Marginalia_*_x64-setup.exe` (or the `.msi`)
+          - **macOS**: `Marginalia_*_aarch64.dmg` (Apple Silicon) or `Marginalia_*_x64.dmg` (Intel)
+          - **Linux**: `Marginalia_*_amd64.AppImage` (any distro: `chmod +x` and run) or the `.deb`
+          - **Command line**: `marginalia-*` archives
+
+          **These builds are not code-signed yet**
+          - Windows SmartScreen: click *More info → Run anyway*.
+          - macOS says the app is damaged or from an unidentified developer: after
+            copying it to Applications, run `xattr -cr /Applications/Marginalia.app`.
+
+          Read-aloud downloads the Piper engine (~25 MB) and a voice (20–100 MB)
+          on first use, from the Voices view.
+          NOTES
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --prerelease \
+              --title "Marginalia $GITHUB_REF_NAME" --notes-file notes.md
+
+  app:
+    name: App (${{ matrix.name }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04 # oldest supported glibc, so the AppImage runs on more distros
+            args: ""
+          - name: Windows
+            os: windows-latest
+            args: ""
+          - name: macOS Apple Silicon
+            os: macos-latest
+            args: --target aarch64-apple-darwin
+          - name: macOS Intel
+            os: macos-latest
+            args: --target x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: >
+          sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev
+          libgtk-3-dev librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+          libasound2-dev patchelf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.args }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/marginalia-app
+          tauriScript: npx --yes @tauri-apps/cli@2
+          args: ${{ matrix.args }}
+          tagName: ${{ github.ref_name }}
+          releaseName: Marginalia ${{ github.ref_name }}
+          prerelease: true
+
+  cli:
+    name: CLI (${{ matrix.target }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked -p marginalia-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name=marginalia-${GITHUB_REF_NAME}-${{ matrix.target }}
+          mkdir "$name"
+          cp README.md LICENSE "$name"/
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/marginalia.exe "$name"/
+            7z a "$name.zip" "$name" >/dev/null
+            echo "ASSET=$name.zip" >> "$GITHUB_ENV"
+          else
+            cp target/${{ matrix.target }}/release/marginalia "$name"/
+            tar czf "$name.tar.gz" "$name"
+            echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+          fi
+      - name: Upload to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" "$ASSET" --clobber
