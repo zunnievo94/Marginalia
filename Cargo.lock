@@ -2178,7 +2178,7 @@ dependencies = [
 
 [[package]]
 name = "marginalia-app"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "marginalia-core",
@@ -2192,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "marginalia-cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "marginalia-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "encoding_rs",
  "epub",
@@ -2214,7 +2214,7 @@ dependencies = [
 
 [[package]]
 name = "marginalia-tts"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "bzip2 0.5.2",

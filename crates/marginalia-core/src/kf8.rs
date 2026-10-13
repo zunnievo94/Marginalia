@@ -155,12 +155,12 @@ fn tag_map(
     out
 }
 
+/// CNCX strings of an index, by offset.
+type Cncx = HashMap<u32, Vec<u8>>;
+
 /// Read an index whose main record is `db[idx]`: its entries and the CNCX
 /// strings (by offset).
-pub(crate) fn read_index(
-    db: &PalmDb,
-    idx: usize,
-) -> Result<(Vec<IndexEntry>, HashMap<u32, Vec<u8>>)> {
+pub(crate) fn read_index(db: &PalmDb, idx: usize) -> Result<(Vec<IndexEntry>, Cncx)> {
     let main = db.record(idx).ok_or_else(|| err("missing INDX record"))?;
     let header = indx_header(main)?;
     let (control_bytes, tagx) = read_tagx(main, header.len);

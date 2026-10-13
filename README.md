@@ -45,12 +45,14 @@ Early stage. What works today:
 | --- | --- |
 | EPUB 2 / 3 | ✅ metadata, spine order, chapter titles from the TOC |
 | MOBI / PRC / AZW | ✅ uncompressed, PalmDOC and HUFF/CDIC compression, EXTH metadata, UTF-8 and CP1252 |
+| KF8 / AZW3 | ✅ chapters rebuilt from the skeleton/fragment indexes and titled from the NCX; `kindle:embed` images; hybrid MOBI+KF8 files |
 | Plain PalmDOC (`.pdb`, old `.prc`) | ✅ plain-text and HTML content |
 | DRM-protected books | ❌ refused with a clear error (DRM-free books only) |
-| TTS: Piper neural voices | ✅ catalog of 100+ voices in ~40 languages, downloaded on demand with MD5 checks |
-| TTS: eSpeak NG fallback | ✅ uses a system `espeak-ng` when Piper is unavailable |
+| Text-to-speech | ✅ runs inside the app with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): 89 Piper voices (~40 languages), Kokoro (natural English and Mandarin), Supertonic 3 (31 languages); models downloaded on demand |
+| TTS fallback | ✅ a system `espeak-ng` when no voice model is installed |
 | Images | ✅ inline pictures (EPUB `<img>`/SVG, MOBI `recindex`) and covers |
-| Languages | ✅ Vietnamese and Chinese (Simplified/Traditional) fonts; GBK/Big5/UTF-16 books; Piper voices for vi, zh and ~40 more |
+| Languages | ✅ Vietnamese and Chinese (Simplified/Traditional) fonts; GBK/Big5/UTF-16 books; voices for vi, zh and ~40 more |
+| Search & bookmarks | ✅ whole-book search ignoring case and accents; bookmarks |
 | Playback | ✅ gapless playback while the next sentence is synthesized, or export to WAV |
 | Notes | ✅ on passages or paragraphs, colors, notes panel, Markdown export |
 | Desktop app | ✅ Windows, macOS, Linux (Tauri). No mobile version is planned. |
@@ -72,10 +74,18 @@ status bar with the read-aloud controls.
   paragraph. Notes are highlighted in one of four colors, marked in the
   margin, listed in a panel on the right (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>)
   and can be exported to Markdown.
-- **Voices**: install the Piper engine and download voices with progress
-  bars; choose a default voice or let it match the book's language.
+- **Search**: <kbd>Ctrl</kbd>+<kbd>F</kbd> searches the whole book, ignoring
+  case and accents (“thung lung” finds “thung lũng”); results are grouped by
+  chapter and highlighted in the text, <kbd>Enter</kbd>/<kbd>F3</kbd> steps
+  through them.
+- **Bookmarks**: <kbd>Ctrl</kbd>+<kbd>D</kbd> (or the ribbon button) marks the
+  paragraph you are reading; bookmarks are listed next to the notes.
+- **Voices**: pick a voice per language (Vietnamese books keep a Vietnamese
+  voice, English books an English one), choose a speaker, listen to a sample,
+  and download or remove models with progress bars.
 
 Shortcuts: <kbd>Space</kbd> play/pause, <kbd>←</kbd>/<kbd>→</kbd> chapters,
+<kbd>Ctrl</kbd>+<kbd>F</kbd> search, <kbd>Ctrl</kbd>+<kbd>D</kbd> bookmark,
 <kbd>Ctrl</kbd>+<kbd>B</kbd> sidebar, <kbd>Ctrl</kbd>+<kbd>O</kbd> open,
 <kbd>Ctrl</kbd>+<kbd>+</kbd>/<kbd>-</kbd> font size, <kbd>Esc</kbd> stop.
 
@@ -119,52 +129,65 @@ marginalia read book.prc -c 3      # print chapter 3 as plain text
 marginalia speak book.epub                 # read aloud from chapter 1
 marginalia speak book.epub -c 5 --speed 1.2
 marginalia speak book.epub -c 5 --chapters 1 --out chapter5.wav
-marginalia say "Testing a voice" --voice en_GB-alan-medium
+marginalia say "Xin chào" --lang vi
+marginalia say "Hello there" --voice kokoro-multi-lang-v1_0 --speaker bf_emma
 ```
 
-The first time you use `speak` or `say`, Marginalia picks a voice for the
-book's language, asks before downloading it (~20–100 MB), and asks before
-downloading the Piper engine (~25 MB). Add `--yes` to skip the questions.
+The first time you use `speak` or `say`, Marginalia picks a voice model for
+the book's language and asks before downloading it (30–350 MB). Add `--yes`
+to skip the question.
 
 ### Managing voices
 
 ```sh
-marginalia voices list --lang en         # browse the catalog
-marginalia voices download en_US-amy-medium
+marginalia voices list --lang vi         # models for a language, best first
+marginalia voices show kokoro-multi-lang-v1_0   # details and speaker names
+marginalia voices download vits-piper-vi_VN-vais1000-medium
 marginalia voices list --installed
-marginalia voices remove en_US-amy-medium
-marginalia engine install                # fetch the Piper runtime up front
-marginalia engine status                 # what is installed and where
+marginalia voices remove vits-piper-vi_VN-vais1000-medium
+marginalia status                        # what is installed and where
 ```
 
-Engines can be chosen with `--engine piper|espeak|auto` (default `auto`:
-Piper, falling back to eSpeak NG).
+Engines can be chosen with `--engine neural|espeak|auto` (default `auto`:
+neural voices, falling back to eSpeak NG).
+
+| Model | Languages | Size | Notes |
+| --- | --- | --- | --- |
+| Piper (`vits-piper-*`) | one each, ~40 languages | 30–130 MB | small and fast; default for **Vietnamese** (`vi_VN-vais1000-medium`) |
+| Kokoro v1.0 | English (US/UK), Mandarin | 350 MB | most natural English/Chinese; needs a reasonably fast CPU |
+| Supertonic 3 | 31 languages incl. Vietnamese, Korean, Japanese | 129 MB | 44.1 kHz, 10 speakers; in Vietnamese it sometimes repeats or skips words |
 
 Downloads are stored in the platform data directory
 (`~/.local/share/marginalia` on Linux, `~/Library/Application
 Support/org.marginalia.Marginalia` on macOS, `%APPDATA%\marginalia\Marginalia\data` on
-Windows). Set `MARGINALIA_DATA_DIR` to use another location, or `MARGINALIA_PIPER`
-to point at your own Piper build.
+Windows). Set `MARGINALIA_DATA_DIR` to use another location.
 
 ## How it works
 
 ```
 crates/
   marginalia-core   Book model + parsers. EPUB via the `epub` crate; MOBI/PRC
-                 (Palm database, PalmDOC LZ77, HUFF/CDIC, EXTH) implemented
-                 here. HTML is converted to clean paragraphs; text is split
-                 into sentences for speech.
-  marginalia-tts    Voice catalog + downloader (Hugging Face rhasspy/piper-voices,
-                 pinned to v1.0.0, MD5-verified), Piper runtime installer and
-                 driver, eSpeak NG driver, WAV writer, audio player (rodio).
+                    (Palm database, PalmDOC LZ77, HUFF/CDIC, EXTH) and KF8
+                    (INDX/TAGX indexes, skeleton/fragment, NCX) implemented
+                    here. HTML becomes paragraphs and images; text is split
+                    into sentences for speech; accent-insensitive search.
+  marginalia-tts    Voice model catalog + downloader (sherpa-onnx GitHub
+                    releases), in-process synthesis with sherpa-onnx (ONNX
+                    Runtime + espeak-ng, statically linked), eSpeak NG
+                    fallback, WAV writer, audio player (rodio).
   marginalia-cli    The `marginalia` command.
   marginalia-app    Desktop app: Tauri backend (src/) + plain HTML/CSS/JS UI (ui/),
                  no Node or bundler needed.
 ```
 
-Speech is produced one sentence at a time on a worker thread. Piper is kept
-running as a single child process, so the model loads once per session, and
-audio plays while the next sentence is being synthesized.
+Speech is produced one sentence at a time on a worker thread: the model is
+loaded once per session, and audio plays while the next sentence is being
+synthesized.
+
+Voice quality was checked by transcribing generated Vietnamese audio with a
+Vietnamese speech-recognition model (sherpa-onnx `zipformer-vi`): Piper
+`vais1000` came back word-perfect, Supertonic sometimes repeated or dropped
+words, which is why Piper is the Vietnamese default.
 
 ## Why Rust (and not Go)
 
@@ -191,19 +214,25 @@ pure CLI better than a cross-platform reading app with audio.
 - [x] Desktop app (Tauri 2) with library, reader, sentence highlighting
 - [x] Remember reading position and resume reading aloud
 - [x] Notes on passages and paragraphs, Markdown export
-- [ ] Search inside a book; bookmarks
-- [ ] Run Piper in-process (ONNX Runtime via `sherpa-rs`/`ort`) instead of a
-      child process; also add Kokoro voices
-- [ ] Full KF8 (AZW3) structure: chapter splitting from the NCX index
+- [x] Search inside a book; bookmarks
+- [x] Voices in-process with sherpa-onnx; Kokoro and Supertonic voices
+- [x] Full KF8 (AZW3) structure: chapter splitting from the NCX index
+- [ ] A more natural Vietnamese voice (e.g. VieNeu-TTS, if it can run
+      without Python)
 - [x] Images and covers
 - [ ] Basic book styling (bold/italic, tables)
 - [ ] FB2, TXT and (maybe) PDF text
 
 ## Licenses
 
-Marginalia is MIT licensed (see [LICENSE](LICENSE)). Downloaded components keep
-their own licenses: the [Piper](https://github.com/rhasspy/piper) engine is
-MIT, each [Piper voice](https://huggingface.co/rhasspy/piper-voices) has a
-`MODEL_CARD` with its dataset license, and
-[eSpeak NG](https://github.com/espeak-ng/espeak-ng) (GPL-3.0) is only run as
-a separate program, never linked.
+Marginalia's source code is MIT licensed (see [LICENSE](LICENSE)).
+
+The app links [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
+(Apache-2.0), [ONNX Runtime](https://github.com/microsoft/onnxruntime) (MIT)
+and [eSpeak NG](https://github.com/espeak-ng/espeak-ng) (**GPL-3.0**)
+statically. Because of eSpeak NG, the **released binaries as a whole are
+distributed under the GPL-3.0**; the full source is in this repository.
+
+Voice models are downloaded separately and keep their own licenses: Piper
+voices list theirs in the bundled `MODEL_CARD`, Kokoro is Apache-2.0, and
+Supertonic 3 is MIT (code) with OpenRAIL-M weights.
