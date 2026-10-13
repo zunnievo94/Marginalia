@@ -1,13 +1,12 @@
 # Third-party software in Marginalia
 
-Marginalia's own source code is under the MIT License (`LICENSE`).
+Marginalia is licensed under the GNU General Public License, version 3 or
+(at your option) any later version (`LICENSE`). The complete source code
+for each release is available at <https://github.com/zunnievo94/Marginalia>
+under the matching `vX.Y.Z` tag.
 
-The released programs (desktop app and `marginalia` command) also contain
-the components below. Two of them are under the **GNU GPL version 3**
-(eSpeak NG and the `epub` crate), so **the released programs as a whole are
-distributed under the GPL-3.0** (`LICENSE-GPL-3.0.txt`). The complete
-source code for each release is available at
-<https://github.com/zunnievo94/Marginalia> under the matching `vX.Y.Z` tag.
+The released programs (desktop app and `marginalia` command) contain the
+components below; all of their licenses are compatible with the GPL-3.0.
 
 | Component | Use | License |
 | --- | --- | --- |

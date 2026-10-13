@@ -42,9 +42,8 @@ jobs:
           - macOS says the app is damaged or from an unidentified developer: after
             copying it to Applications, run `xattr -cr /Applications/Marginalia.app`.
 
-          **License**: Marginalia's code is MIT; the released programs include
-          GPL-3.0 components (eSpeak NG, epub) and are distributed under the
-          GPL-3.0. See THIRD_PARTY_NOTICES.md; the source is this tag.
+          **License**: GPL-3.0-or-later. The source code of this release is
+          this tag; third-party components are listed in THIRD_PARTY_NOTICES.md.
 
           Read-aloud runs on your computer. The first time, download a voice
           model (30–350 MB) for your book's language in the Voices view; for
@@ -163,7 +162,7 @@ jobs:
         run: |
           name=marginalia-cli-${{ matrix.target }}
           mkdir "$name"
-          cp README.md LICENSE LICENSE-GPL-3.0.txt THIRD_PARTY_NOTICES.md "$name"/
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "$name"/
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp target/${{ matrix.target }}/release/marginalia.exe "$name"/
             7z a "$name.zip" "$name" >/dev/null

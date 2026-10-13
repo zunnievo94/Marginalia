@@ -29,7 +29,6 @@
     "license": "GPL-3.0-or-later",
     "resources": {
       "../../LICENSE": "licenses/LICENSE",
-      "../../LICENSE-GPL-3.0.txt": "licenses/LICENSE-GPL-3.0.txt",
       "../../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md"
     },
     "shortDescription": "EPUB/MOBI/PRC reader with text-to-speech",

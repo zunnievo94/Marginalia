@@ -16,7 +16,7 @@ with the app.
 > **About this project.** Marginalia is built for its owner's own needs: a
 > reader that opens the formats they use and can read to them. It is not
 > aimed at any particular audience, market, or business goal. It is shared
-> openly (MIT) in case it is useful to someone else, but features and
+> openly (GPL-3.0-or-later) in case it is useful to someone else, but features and
 > priorities follow what the owner needs.
 
 ## Download
@@ -225,16 +225,21 @@ pure CLI better than a cross-platform reading app with audio.
 
 ## Licenses
 
-Marginalia's source code is MIT licensed (see [LICENSE](LICENSE)).
+Copyright © 2026 zunnievo94.
 
-The released programs also contain two GPL-3.0 components, [eSpeak
-NG](https://github.com/espeak-ng/espeak-ng) (linked into the app through
-sherpa-onnx) and the [`epub`](https://github.com/danigm/epub-rs) crate, so
-**the released binaries as a whole are distributed under the
-[GPL-3.0](LICENSE-GPL-3.0.txt)**; the full source of every release is in
-this repository. The other components (sherpa-onnx, ONNX Runtime, Tauri and
-the remaining Rust crates) use permissive licenses compatible with that.
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the list.
+Marginalia is free software: you can redistribute it and/or modify it under
+the terms of the [GNU General Public License](LICENSE) as published by the
+Free Software Foundation, either version 3 of the License, or (at your
+option) any later version. It is distributed in the hope that it will be
+useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the license for
+details.
+
+The released programs include third-party components, among them [eSpeak
+NG](https://github.com/espeak-ng/espeak-ng) (GPL-3.0-or-later, linked
+through sherpa-onnx), the [`epub`](https://github.com/danigm/epub-rs) crate
+(GPL-3.0), sherpa-onnx (Apache-2.0) and ONNX Runtime (MIT); all are
+compatible with the GPL-3.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Voice models are downloaded separately and keep their own licenses: Piper
 voices list theirs in the bundled `MODEL_CARD`, Kokoro is Apache-2.0, and
