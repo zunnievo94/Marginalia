@@ -19,6 +19,24 @@ with the app.
 > openly (MIT) in case it is useful to someone else, but features and
 > priorities follow what the owner needs.
 
+## Download
+
+| System | Installer |
+| --- | --- |
+| **Windows** 10/11 (64-bit) | [Marginalia-windows-x64-setup.exe](https://github.com/zunnievo94/marginalia/releases/latest/download/Marginalia-windows-x64-setup.exe) · [.msi](https://github.com/zunnievo94/marginalia/releases/latest/download/Marginalia-windows-x64.msi) |
+| **macOS** Apple Silicon (M1–M4) | [Marginalia-macos-arm64.dmg](https://github.com/zunnievo94/marginalia/releases/latest/download/Marginalia-macos-arm64.dmg) |
+| **macOS** Intel | [Marginalia-macos-x64.dmg](https://github.com/zunnievo94/marginalia/releases/latest/download/Marginalia-macos-x64.dmg) |
+| **Linux** (any distro) | [Marginalia-linux-x86_64.AppImage](https://github.com/zunnievo94/marginalia/releases/latest/download/Marginalia-linux-x86_64.AppImage) · [.deb](https://github.com/zunnievo94/marginalia/releases/latest/download/Marginalia-linux-amd64.deb) |
+| Command line | [Linux](https://github.com/zunnievo94/marginalia/releases/latest/download/marginalia-cli-x86_64-unknown-linux-gnu.tar.gz) · [Windows](https://github.com/zunnievo94/marginalia/releases/latest/download/marginalia-cli-x86_64-pc-windows-msvc.zip) · [macOS Apple Silicon](https://github.com/zunnievo94/marginalia/releases/latest/download/marginalia-cli-aarch64-apple-darwin.tar.gz) · [macOS Intel](https://github.com/zunnievo94/marginalia/releases/latest/download/marginalia-cli-x86_64-apple-darwin.tar.gz) |
+
+These links always point to the [latest release](https://github.com/zunnievo94/marginalia/releases/latest).
+The builds are not code-signed yet:
+
+- **Windows**: if SmartScreen warns, click *More info → Run anyway*.
+- **macOS**: if it says the app is damaged or from an unidentified developer,
+  move it to Applications and run `xattr -cr /Applications/Marginalia.app`.
+- **Linux AppImage**: `chmod +x Marginalia-linux-x86_64.AppImage` and run it.
+
 ## Status
 
 Early stage. What works today:

@@ -23,10 +23,10 @@ jobs:
           Early test build of Marginalia, an EPUB/MOBI/PRC reader that can read books aloud.
 
           **Downloads**
-          - **Windows**: `Marginalia_*_x64-setup.exe` (or the `.msi`)
-          - **macOS**: `Marginalia_*_aarch64.dmg` (Apple Silicon) or `Marginalia_*_x64.dmg` (Intel)
-          - **Linux**: `Marginalia_*_amd64.AppImage` (any distro: `chmod +x` and run) or the `.deb`
-          - **Command line**: `marginalia-*` archives
+          - **Windows**: `Marginalia-windows-x64-setup.exe` (or the `.msi`)
+          - **macOS**: `Marginalia-macos-arm64.dmg` (Apple Silicon) or `Marginalia-macos-x64.dmg` (Intel)
+          - **Linux**: `Marginalia-linux-x86_64.AppImage` (any distro: `chmod +x` and run) or the `.deb`
+          - **Command line**: `marginalia-cli-*` archives
 
           **These builds are not code-signed yet**
           - Windows SmartScreen: click *More info → Run anyway*.
@@ -37,7 +37,7 @@ jobs:
           on first use, from the Voices view.
           NOTES
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --prerelease \
+            gh release create "$GITHUB_REF_NAME" \
               --title "Marginalia $GITHUB_REF_NAME" --notes-file notes.md
 
   app:
@@ -47,18 +47,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `assets`: "<built file glob> <stable release name>" pairs. Stable
+          # names let the README link to releases/latest/download/<name>.
           - name: Linux
             os: ubuntu-22.04 # oldest supported glibc, so the AppImage runs on more distros
             args: ""
+            assets: >-
+              target/release/bundle/appimage/*.AppImage Marginalia-linux-x86_64.AppImage
+              target/release/bundle/deb/*.deb Marginalia-linux-amd64.deb
           - name: Windows
             os: windows-latest
             args: ""
+            assets: >-
+              target/release/bundle/nsis/*-setup.exe Marginalia-windows-x64-setup.exe
+              target/release/bundle/msi/*.msi Marginalia-windows-x64.msi
           - name: macOS Apple Silicon
             os: macos-latest
             args: --target aarch64-apple-darwin
+            assets: >-
+              target/aarch64-apple-darwin/release/bundle/dmg/*.dmg Marginalia-macos-arm64.dmg
           - name: macOS Intel
             os: macos-latest
             args: --target x86_64-apple-darwin
+            assets: >-
+              target/x86_64-apple-darwin/release/bundle/dmg/*.dmg Marginalia-macos-x64.dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -82,16 +94,27 @@ jobs:
         with:
           node-version: 22
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build installers
+        working-directory: crates/marginalia-app
+        run: npx --yes @tauri-apps/cli@2 build ${{ matrix.args }}
+
+      - name: Upload to the release
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: crates/marginalia-app
-          tauriScript: npx --yes @tauri-apps/cli@2
-          args: ${{ matrix.args }}
-          tagName: ${{ github.ref_name }}
-          releaseName: Marginalia ${{ github.ref_name }}
-          prerelease: true
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASSETS: ${{ matrix.assets }}
+        run: |
+          set -euo pipefail
+          read -ra parts <<< "$ASSETS"
+          for ((i = 0; i < ${#parts[@]}; i += 2)); do
+            files=( ${parts[i]} )  # expand the glob
+            if [ ! -f "${files[0]}" ]; then
+              echo "::error::no file matches ${parts[i]}"
+              exit 1
+            fi
+            cp "${files[0]}" "${parts[i+1]}"
+            gh release upload "$GITHUB_REF_NAME" "${parts[i+1]}" --clobber
+          done
 
   cli:
     name: CLI (${{ matrix.target }})
@@ -124,7 +147,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name=marginalia-${GITHUB_REF_NAME}-${{ matrix.target }}
+          name=marginalia-cli-${{ matrix.target }}
           mkdir "$name"
           cp README.md LICENSE "$name"/
           if [ "$RUNNER_OS" = "Windows" ]; then
