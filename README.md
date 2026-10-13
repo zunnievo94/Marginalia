@@ -180,7 +180,7 @@ crates/
   marginalia-tts    Voice model catalog + downloader (sherpa-onnx GitHub
                     releases, Hugging Face), in-process synthesis with
                     sherpa-onnx (ONNX Runtime + espeak-ng, statically
-                    linked), a Rust port of VieNeu-TTS's ONNX engines on the
+                    linked), VieNeu voices through the vieneu-tts crate on the
                     same ONNX Runtime, eSpeak NG fallback, WAV writer, audio
                     player (rodio).
   marginalia-cli    The `marginalia` command.
@@ -197,7 +197,10 @@ Vietnamese speech-recognition model (sherpa-onnx `zipformer-vi`): Piper
 `vais1000` came back word-perfect, Supertonic sometimes repeated or dropped
 words, which is why Piper is the Vietnamese default.
 
-VieNeu voices run without Python: text goes through
+VieNeu voices come from [vieneu-tts-rs](https://github.com/zunnievo94/vieneu-tts-rs),
+a separate crate so other Rust programs can use them too. The models and
+their design are the work of Phạm Nguyễn Ngọc Bảo and VieNeu-TTS; the
+crate only re-implements inference. They run without Python: text goes through
 [sea-g2p](https://github.com/pnnbao97/sea-g2p) (a Rust crate), the graphs
 through the ONNX Runtime that sherpa-onnx already links, and the glue
 VieNeu writes in NumPy (embeddings, sampling, the stop and "babble" checks)

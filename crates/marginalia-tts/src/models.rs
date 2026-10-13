@@ -154,45 +154,18 @@ impl Pack {
     /// `(url, file name)` of each file of a model that is not a sherpa-onnx
     /// archive.
     pub fn files(&self) -> Vec<(String, String)> {
-        use crate::vieneu::{nano, turbo, HF, SEA_G2P_DICT, SEA_G2P_DICT_URL, VIENEU_RAW};
-        // Pinned to the commits the port was checked against.
-        let hf = |repo: &str, rev: &str, path: &str| format!("{HF}/{repo}/resolve/{rev}/{path}");
-        let name = |f: &str| f.rsplit('/').next().unwrap_or(f).to_string();
-        let mut files: Vec<(String, String)> = match self.kind {
-            Kind::VieneuTurbo => turbo::FILES
-                .iter()
-                .map(|f| {
-                    (
-                        hf(
-                            turbo::REPO,
-                            turbo::REVISION,
-                            &format!("{}/{f}", turbo::SUBFOLDER),
-                        ),
-                        name(f),
-                    )
-                })
-                .chain(
-                    turbo::CODEC_FILES
-                        .iter()
-                        .map(|f| (hf(turbo::CODEC_REPO, turbo::CODEC_REVISION, f), name(f))),
-                )
-                .chain([(
-                    format!("{VIENEU_RAW}/src/vieneu/assets/{}", turbo::VOICES),
-                    turbo::VOICES.into(),
-                )])
-                .collect(),
-            Kind::VieneuNano => nano::FILES
-                .iter()
-                .map(|f| (hf(nano::REPO, nano::REVISION, f), name(f)))
-                .chain([(
-                    format!("{VIENEU_RAW}/src/vieneu/assets/{}", nano::VOICES),
-                    nano::VOICES.into(),
-                )])
-                .collect(),
-            _ => return Vec::new(),
-        };
-        files.push((SEA_G2P_DICT_URL.into(), SEA_G2P_DICT.into()));
-        files
+        match self.vieneu_model() {
+            Some(m) => m.files(),
+            None => Vec::new(),
+        }
+    }
+
+    pub(crate) fn vieneu_model(&self) -> Option<vieneu_tts::Model> {
+        match self.kind {
+            Kind::VieneuTurbo => Some(vieneu_tts::Model::Turbo),
+            Kind::VieneuNano => Some(vieneu_tts::Model::Nano),
+            _ => None,
+        }
     }
 
     /// Download and extract the model. Safe to call again after a failure.

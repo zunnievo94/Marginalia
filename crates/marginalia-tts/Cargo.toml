@@ -24,13 +24,8 @@ rodio = { version = "0.21", optional = true, default-features = false, features 
 # ONNX Runtime + espeak-ng, statically linked (prebuilt libraries are
 # downloaded by its build script).
 sherpa-onnx = "1.13.8"
-# VieNeu-TTS voices: the ONNX Runtime linked above, driven directly. The
-# `alternative-backend` feature stops ort from linking a second copy.
-ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "alternative-backend"] }
-# Vietnamese text normalization and phonemes for VieNeu (Rust core, no Python).
-sea-g2p-rs = { git = "https://github.com/pnnbao97/sea-g2p", rev = "e825173f235d08ea19315b2b279fb11153b44cea", default-features = false }
-tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+# VieNeu-TTS voices, sharing the ONNX Runtime linked above.
+vieneu-tts = { git = "https://github.com/zunnievo94/vieneu-tts-rs", rev = "86a082060b921a47f9ffec089f51fc46766ba7e9", default-features = false, features = ["shared-ort"] }
 tar = "0.4"
 tempfile = "3"
 ureq = { version = "3", features = ["platform-verifier"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }

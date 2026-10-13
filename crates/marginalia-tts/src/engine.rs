@@ -1,5 +1,5 @@
 //! In-process speech synthesis: sherpa-onnx for Piper, Kokoro and
-//! Supertonic, the VieNeu port for VieNeu voices.
+//! Supertonic, the `vieneu-tts` crate for VieNeu voices.
 
 use std::collections::HashMap;
 
@@ -11,8 +11,8 @@ use sherpa_onnx::{
 
 use crate::audio::Audio;
 use crate::models::{normalize_lang, Kind, Pack};
-use crate::vieneu::{nano::Nano, turbo::Turbo};
 use crate::Synthesizer;
+use vieneu_tts::{Nano, Turbo};
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -188,6 +188,7 @@ impl Engine {
             .get(sid)
             .with_context(|| format!("voice model {} lists no voices", pack.id))?;
         let dir = pack.dir()?;
+        share_onnx_runtime()?;
         let backend = match pack.kind {
             // An autoregressive model: it has no speed control.
             Kind::VieneuTurbo => Backend::Turbo(Box::new(
@@ -208,10 +209,28 @@ impl Engine {
     pub fn sample_rate(&self) -> u32 {
         match &self.backend {
             Backend::Sherpa { tts, .. } => tts.sample_rate().max(1) as u32,
-            Backend::Turbo(_) => crate::vieneu::turbo::SAMPLE_RATE,
-            Backend::Nano(_) => crate::vieneu::nano::SAMPLE_RATE,
+            Backend::Turbo(_) => vieneu_tts::turbo::SAMPLE_RATE,
+            Backend::Nano(_) => vieneu_tts::nano::SAMPLE_RATE,
         }
     }
+}
+
+extern "C" {
+    /// ONNX Runtime's entry point, from the static library sherpa-onnx links.
+    fn OrtGetApiBase() -> *const vieneu_tts::ort::sys::OrtApiBase;
+}
+
+/// Point `vieneu-tts` at the ONNX Runtime sherpa-onnx already carries, so
+/// the app holds one copy of the runtime and ships no extra library.
+fn share_onnx_runtime() -> Result<()> {
+    static SHARED: std::sync::OnceLock<std::result::Result<(), String>> =
+        std::sync::OnceLock::new();
+    SHARED
+        .get_or_init(|| {
+            unsafe { vieneu_tts::use_ort_api_base(OrtGetApiBase()) }.map_err(|e| format!("{e:#}"))
+        })
+        .clone()
+        .map_err(|e| anyhow::anyhow!(e))
 }
 
 impl Synthesizer for Engine {
@@ -224,11 +243,11 @@ impl Synthesizer for Engine {
             Backend::Sherpa { tts, generation } => (tts, generation),
             Backend::Turbo(t) => {
                 let samples = t.synthesize(&text)?;
-                return Ok(Audio::from_f32(crate::vieneu::turbo::SAMPLE_RATE, &samples));
+                return Ok(Audio::from_f32(vieneu_tts::turbo::SAMPLE_RATE, &samples));
             }
             Backend::Nano(n) => {
                 let samples = n.synthesize(&text)?;
-                return Ok(Audio::from_f32(crate::vieneu::nano::SAMPLE_RATE, &samples));
+                return Ok(Audio::from_f32(vieneu_tts::nano::SAMPLE_RATE, &samples));
             }
         };
         let audio = tts

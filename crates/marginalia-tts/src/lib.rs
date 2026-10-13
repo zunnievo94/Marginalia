@@ -4,7 +4,8 @@
 //!   Supertonic) and downloads them on demand into the data directory.
 //! * [`engine`] runs them in-process with sherpa-onnx (ONNX Runtime and
 //!   espeak-ng linked into the app, no helper programs); VieNeu voices go
-//!   through `vieneu`, a Rust port of VieNeu-TTS's ONNX pipeline.
+//!   through the `vieneu-tts` crate, a Rust port of VieNeu-TTS's ONNX
+//!   pipeline (<https://github.com/zunnievo94/vieneu-tts-rs>).
 //! * [`espeak`] is a zero-download fallback using a system eSpeak NG.
 //! * [`audio`] writes WAV files and (with the `playback` feature) plays audio.
 
@@ -14,7 +15,6 @@ pub mod engine;
 pub mod espeak;
 pub mod models;
 pub mod paths;
-mod vieneu;
 
 pub use audio::Audio;
 

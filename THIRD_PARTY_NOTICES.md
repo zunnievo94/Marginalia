@@ -14,7 +14,7 @@ components below; all of their licenses are compatible with the GPL-3.0.
 | [epub](https://github.com/danigm/epub-rs) | EPUB parsing | GPL-3.0 |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | speech synthesis runtime | Apache-2.0 |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | neural network inference | MIT |
-| [VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) © Phạm Nguyễn Ngọc Bảo | the VieNeu voice pipeline in `crates/marginalia-tts/src/vieneu/` is a Rust port of its ONNX engines (`onnx_runtime_lite.py`, `v3nano.py`) and text chunking/pause helpers, modified to fit Marginalia | Apache-2.0 |
+| [vieneu-tts-rs](https://github.com/zunnievo94/vieneu-tts-rs) | VieNeu voices: a Rust port of the ONNX inference of [VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) © Phạm Nguyễn Ngọc Bảo (models, design and reference code are VieNeu-TTS's) | Apache-2.0 |
 | [sea-g2p](https://github.com/pnnbao97/sea-g2p) © Phạm Nguyễn Ngọc Bảo | Vietnamese text normalization and phonemes for VieNeu voices (its dictionary is downloaded with the voice) | Apache-2.0 |
 | [ort](https://github.com/pykeio/ort) | ONNX Runtime bindings for VieNeu voices | MIT OR Apache-2.0 |
 | [tokenizers](https://github.com/huggingface/tokenizers) | VieNeu Turbo tokenizer | Apache-2.0 |
