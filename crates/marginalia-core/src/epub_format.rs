@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use epub::doc::{EpubDoc, NavPoint};
 
@@ -105,27 +105,29 @@ impl Images {
 }
 
 /// Resolve an `src` relative to the chapter's directory inside the archive.
+/// Archive paths always use `/`, whatever the OS (so no `Path::join`, which
+/// would use `\\` on Windows).
 fn resolve(base: &Path, src: &str) -> Option<PathBuf> {
     if src.contains("://") || src.starts_with("data:") {
         return None; // remote or inline images are not supported
     }
     let src = percent_decode(src.split(['#', '?']).next()?);
-    let joined = if let Some(abs) = src.strip_prefix('/') {
-        PathBuf::from(abs)
+    let base = base.to_string_lossy().replace('\\', "/");
+    let mut parts: Vec<&str> = if src.starts_with('/') {
+        Vec::new()
     } else {
-        base.join(&src)
+        base.split('/').filter(|s| !s.is_empty()).collect()
     };
-    let mut out = PathBuf::new();
-    for c in joined.components() {
-        match c {
-            Component::ParentDir => {
-                out.pop();
+    for segment in src.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
             }
-            Component::Normal(p) => out.push(p),
-            _ => {}
+            s => parts.push(s),
         }
     }
-    Some(out)
+    Some(PathBuf::from(parts.join("/")))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -185,5 +187,11 @@ mod tests {
             Some(PathBuf::from("img/d.gif"))
         );
         assert_eq!(resolve(base, "https://x/y.png"), None);
+        // Windows-style base paths still produce archive (`/`) paths.
+        assert_eq!(
+            resolve(Path::new("OEBPS\\Text"), "../img/e.png")
+                .map(|p| p.to_string_lossy().into_owned()),
+            Some("OEBPS/img/e.png".to_string())
+        );
     }
 }
