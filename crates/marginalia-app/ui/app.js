@@ -29,9 +29,10 @@ const state = {
   tts: "stopped", // loading | playing | paused | stopped
   voiceLabel: "",
   engine: null,
-  catalog: null,
-  catalogError: null,
-  voiceLang: null,
+  models: null, // voice models for voiceLang
+  current: null, // voice used for voiceLang
+  allLangs: null,
+  voiceLang: null, // language family shown in the Voices view
   downloads: {}, // key -> { done, total }
   chapterFilter: "",
   notes: [], // notes of the open book
@@ -231,170 +232,195 @@ function renderLibrary(root) {
 }
 
 async function refreshEngine() {
+  if (!state.voiceLang) state.voiceLang = langFamily(state.book?.entry.language || "en");
   try {
-    state.engine = await invoke("engine_status");
+    const [engine, models, current] = await Promise.all([
+      invoke("engine_status"),
+      invoke("models_list", { lang: state.voiceLang }),
+      invoke("voice_current", { lang: state.voiceLang }),
+    ]);
+    Object.assign(state, { engine, models, current });
+    if (!state.allLangs) {
+      const all = await invoke("models_list", { lang: null });
+      state.allLangs = [...new Set(all.flatMap((m) => m.languages.map(langFamily)))];
+    }
   } catch (e) {
     state.engine = null;
-  }
-  if (!state.catalog && !state.catalogError) {
-    invoke("voices_catalog", { refresh: false })
-      .then((c) => { state.catalog = c; })
-      .catch((e) => { state.catalogError = String(e); })
-      .finally(() => state.view === "voices" && renderSidebar());
+    toast(String(e), { error: true });
   }
   if (state.view === "voices") renderSidebar();
 }
 
-function bookLanguage() {
-  return (state.book?.entry.language || "en").replace("-", "_");
+function langFamily(lang) {
+  return String(lang).replace("-", "_").split("_")[0].toLowerCase();
+}
+
+const LANG_NAMES = (() => {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" });
+  } catch {
+    return null;
+  }
+})();
+
+function langName(code) {
+  try {
+    return LANG_NAMES?.of(code.replace("_", "-")) || code;
+  } catch {
+    return code;
+  }
+}
+
+const SAMPLES = {
+  vi: "Xin chào! Đây là giọng đọc của Marginalia. Chúc bạn đọc sách vui vẻ.",
+  en: "Hello! This is how Marginalia sounds when it reads your books aloud.",
+  zh: "你好！这是Marginalia为你朗读书籍的声音。",
+  fr: "Bonjour ! Voici la voix de Marginalia.",
+  de: "Hallo! So klingt Marginalia, wenn es dir vorliest.",
+  es: "¡Hola! Así suena Marginalia cuando te lee un libro.",
+  ja: "こんにちは。これはマージナリアの声です。",
+  ko: "안녕하세요. 마지널리아의 목소리입니다.",
+};
+
+const KOKORO_ACCENTS = { a: "American", b: "British", z: "Chinese", e: "Spanish", f: "French", h: "Hindi", i: "Italian", j: "Japanese", p: "Portuguese" };
+
+// Speakers worth offering for a language, as [index, label] pairs.
+function speakerOptions(model, lang) {
+  const names = model.speakers;
+  if (names.length <= 1) return [];
+  const opts = names.map((n, i) => [i, n]);
+  if (model.kind === "kokoro") {
+    const prefixes = lang === "zh" ? ["z"] : lang === "en" ? ["a", "b"] : Object.keys(KOKORO_ACCENTS);
+    return opts
+      .filter(([, n]) => prefixes.includes(n[0]))
+      .map(([i, n]) => [i, `${n.slice(3).replace(/^./, (c) => c.toUpperCase())} — ${KOKORO_ACCENTS[n[0]] || ""} ${n[1] === "f" ? "female" : "male"}`]);
+  }
+  if (model.kind === "supertonic") {
+    return opts.map(([i, n]) => [i, `${n[0] === "F" ? "Female" : "Male"} ${n.slice(1)}`]);
+  }
+  return opts.map(([i, n]) => [i, /^\d+$/.test(n) ? `Speaker ${n}` : n]);
+}
+
+function setVoice(model, speaker) {
+  const voices = { ...(state.settings.voices || {}) };
+  voices[state.voiceLang] = { model, speaker };
+  updateSetting("voices", voices);
+  invoke("voice_current", { lang: state.voiceLang }).then((c) => {
+    state.current = c;
+    if (state.view === "voices") renderSidebar();
+  });
+}
+
+function previewVoice(model, speaker) {
+  const text = SAMPLES[state.voiceLang] || SAMPLES.en;
+  invoke("tts_preview", { text, lang: state.voiceLang, model, speaker }).catch((e) => toast(String(e), { error: true }));
 }
 
 function renderVoices(root) {
   const eng = state.engine;
-  root.append(el(`<div class="section-header"><span class="grow">Speech engine</span></div>`));
-  if (!eng) {
-    root.append(el(`<div class="hint">Checking…</div>`));
+  if (!eng || !state.models) {
+    root.append(el(`<div class="hint">Loading voices…</div>`));
     return;
   }
-  const piperDl = state.downloads.piper;
-  if (eng.piper) {
-    root.append(el(`<div class="hint">✓ Piper neural TTS is installed.</div>`));
-  } else if (eng.piper_supported) {
-    const box = el(`<div class="hint">Piper gives natural-sounding voices. Download the engine (~25 MB) once.</div>`);
-    root.append(box);
-    if (piperDl) {
-      box.append(progressBar(piperDl));
-    } else {
-      const b = el(`<button class="btn block">Install Piper engine</button>`);
-      b.onclick = installPiper;
-      root.append(b);
-    }
-  } else {
-    root.append(el(`<div class="hint">Piper has no prebuilt binary for this system.</div>`));
-  }
-  root.append(el(`<div class="hint">${eng.espeak ? "✓ eSpeak NG found (fallback voice)." : "eSpeak NG not found (optional fallback)."}</div>`));
+  const lang = state.voiceLang;
+  const name = langName(lang);
 
-  // Installed voices: pick the default.
-  root.append(el(`<div class="section-header"><span class="grow">Installed voices</span><span class="badge">${eng.installed.length}</span></div>`));
-  if (!eng.installed.length) {
-    root.append(el(`<div class="hint">No voices yet — download one below.</div>`));
+  // Language picker.
+  const sel = el(`<div class="filter"><select title="Language"></select></div>`);
+  const select = sel.querySelector("select");
+  const langs = [...new Set([...(state.allLangs || []), lang])]
+    .map((c) => [c, langName(c)])
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  for (const [code, label] of langs) select.append(new Option(label, code, false, code === lang));
+  select.onchange = () => {
+    state.voiceLang = select.value;
+    state.models = null;
+    renderSidebar();
+    refreshEngine();
+  };
+  root.append(sel);
+
+  // The voice currently used for this language.
+  root.append(el(`<div class="section-header"><span class="grow">Voice for ${esc(name)}</span></div>`));
+  const installed = state.models.filter((m) => m.installed);
+  if (!installed.length) {
+    root.append(el(`<div class="hint">No voice for ${esc(name)} yet. Download one below — the ★ one is a good start.</div>`));
   }
-  const auto = el(`<div class="list-item${state.settings.voice ? "" : " active"}"><span class="label">Automatic (match book language)</span></div>`);
-  auto.onclick = () => { updateSetting("voice", null); renderSidebar(); };
-  if (eng.installed.length) root.append(auto);
-  for (const key of eng.installed) {
-    const item = el(`<div class="list-item${state.settings.voice === key ? " active" : ""}">
-      <span class="label">${esc(key)}</span>
-      <span class="actions"><button class="icon-btn" title="Try this voice">▶</button><button class="icon-btn" title="Delete">×</button></span></div>`);
-    item.onclick = () => { updateSetting("voice", key); renderSidebar(); };
-    const [tryBtn, delBtn] = item.querySelectorAll(".actions button");
-    tryBtn.onclick = (e) => {
+  for (const m of installed) {
+    const active = state.current?.model === m.id;
+    const item = el(`<div class="list-item voice-choice${active ? " active" : ""}" style="flex-wrap:wrap">
+      <span class="label">${active ? "● " : "○ "}${esc(m.name)} <span class="meta">${esc(m.kind)}</span></span>
+      <span class="actions" style="display:flex"><button class="icon-btn" title="Listen">▶</button></span></div>`);
+    item.onclick = () => setVoice(m.id, null);
+    const speakers = speakerOptions(m, lang);
+    const currentSpeaker = active ? state.current.speaker : null;
+    item.querySelector("button").onclick = (e) => {
       e.stopPropagation();
-      updateSetting("voice", key);
-      renderSidebar();
-      if (state.book) play(currentStart());
+      previewVoice(m.id, currentSpeaker);
     };
-    delBtn.onclick = async (e) => {
-      e.stopPropagation();
-      await call("voice_remove", { key });
-      if (state.settings.voice === key) updateSetting("voice", null);
-      markInstalled(key, false);
-      refreshEngine();
-    };
+    if (active && speakers.length) {
+      const s = el(`<select style="margin-top:4px" title="Speaker"></select>`);
+      for (const [i, label] of speakers) s.append(new Option(label, i, false, i === currentSpeaker));
+      if (!speakers.some(([i]) => i === currentSpeaker)) s.prepend(new Option("Default", "", true, true));
+      s.onclick = (e) => e.stopPropagation();
+      s.onchange = () => {
+        const sp = s.value === "" ? null : Number(s.value);
+        setVoice(m.id, sp);
+        previewVoice(m.id, sp);
+      };
+      item.append(s);
+    }
     root.append(item);
   }
 
-  // Catalog.
-  root.append(el(`<div class="section-header"><span class="grow">Download voices</span></div>`));
-  if (state.catalogError) {
-    root.append(el(`<div class="hint error-text">Could not load the voice catalog: ${esc(state.catalogError)}</div>`));
-    const retry = el(`<button class="btn block secondary">Retry</button>`);
-    retry.onclick = () => { state.catalogError = null; refreshEngine(); };
-    root.append(retry);
-    return;
-  }
-  if (!state.catalog) {
-    root.append(el(`<div class="hint">Loading catalog…</div>`));
-    return;
-  }
-  const langs = new Map();
-  for (const v of state.catalog) {
-    langs.set(v.language_code, `${v.language} (${v.country || v.language_code})`);
-  }
-  if (!state.voiceLang) {
-    const lang = bookLanguage();
-    const family = lang.split("_")[0];
-    const codes = [...langs.keys()];
-    // "en" -> en_US, "fr" -> fr_FR, "de" -> de_DE ... when only a family is known.
-    const main = family === "en" ? "en_US" : `${family}_${family.toUpperCase()}`;
-    state.voiceLang = codes.find((c) => c.toLowerCase() === lang.toLowerCase())
-      || codes.find((c) => c === main)
-      || codes.find((c) => c.split("_")[0] === family) || "en_US";
-  }
-  const sel = el(`<div class="filter"><select></select></div>`);
-  const select = sel.querySelector("select");
-  for (const [code, name] of [...langs].sort((a, b) => a[1].localeCompare(b[1]))) {
-    select.append(new Option(name, code, false, code === state.voiceLang));
-  }
-  select.onchange = () => { state.voiceLang = select.value; renderSidebar(); };
-  root.append(sel);
-  for (const v of state.catalog.filter((v) => v.language_code === state.voiceLang)) {
-    const dl = state.downloads[v.key];
-    const item = el(`<div class="list-item" style="flex-wrap:wrap">
-      <span class="label">${esc(v.key.split("-").slice(1).join(" · "))}</span>
-      <span class="meta">${mb(v.size)}</span><span class="slot"></span></div>`);
+  // Models that speak this language.
+  root.append(el(`<div class="section-header"><span class="grow">Voice models for ${esc(name)}</span></div>`));
+  if (!state.models.length) root.append(el(`<div class="hint">No voice model speaks ${esc(name)}.</div>`));
+  for (const m of state.models) {
+    const dl = state.downloads[m.id];
+    const item = el(`<div class="model-card${m.recommended ? " recommended" : ""}">
+      <div class="row"><span class="label">${m.recommended ? "★ " : ""}${esc(m.name)}</span>
+        <span class="badge">${esc(m.kind)}</span><span class="meta">${mb(m.size)}</span></div>
+      ${m.note ? `<div class="meta">${esc(m.note)}</div>` : ""}
+      <div class="meta">${m.speakers.length > 1 ? `${m.speakers.length} speakers · ` : ""}${m.languages.length > 3 ? `${m.languages.length} languages` : esc(m.languages.join(", "))} · ${esc(m.license)}</div>
+      <div class="slot"></div></div>`);
     const slot = item.querySelector(".slot");
-    if (v.installed) {
-      slot.append(el(`<span class="badge">installed</span>`));
-    } else if (dl) {
-      item.append(progressBar(dl));
+    if (dl) {
+      slot.append(progressBar(dl));
+    } else if (m.installed) {
+      const rm = el(`<button class="btn small secondary">Remove</button>`);
+      rm.onclick = async () => {
+        await call("model_remove", { id: m.id });
+        refreshEngine();
+      };
+      slot.append(rm);
     } else {
       const b = el(`<button class="btn small">Download</button>`);
-      b.onclick = () => downloadVoice(v.key);
+      b.onclick = () => downloadModel(m.id);
       slot.append(b);
     }
-    item.title = `${v.key} — ${v.quality} quality${v.speakers > 1 ? `, ${v.speakers} speakers` : ""}`;
     root.append(item);
   }
-  root.append(el(`<div class="hint">Voices come from the open <code>rhasspy/piper-voices</code> collection. Each voice has its own license (see its model card). Stored in <code>${esc(eng.data_dir)}</code>.</div>`));
+  root.append(el(`<div class="hint">Voices run on this computer with <code>sherpa-onnx</code>; nothing is sent online.
+    ${eng.espeak ? "eSpeak NG is used as a fallback." : ""} Models are stored in <code>${esc(eng.data_dir)}</code>.</div>`));
 }
 
 function progressBar(dl) {
   const pct = dl.total ? Math.round((dl.done / dl.total) * 100) : 0;
-  const n = el(`<div style="width:100%"><div class="bar"><div style="width:${pct}%"></div></div>
+  return el(`<div style="width:100%"><div class="bar"><div style="width:${pct}%"></div></div>
     <div class="meta">${dl.total ? `${pct}% of ${mb(dl.total)}` : mb(dl.done)}</div></div>`);
-  return n;
 }
 
-function markInstalled(key, installed) {
-  const v = state.catalog?.find((v) => v.key === key);
-  if (v) v.installed = installed;
-}
-
-async function installPiper() {
-  state.downloads.piper = { done: 0, total: null };
+async function downloadModel(id) {
+  state.downloads[id] = { done: 0, total: null };
   renderSidebar();
   try {
-    await invoke("engine_install");
-    toast("Piper engine installed.");
+    await invoke("model_download", { id });
+    toast(`Voice model downloaded.`);
   } catch (e) {
-    toast("Installing Piper failed: " + e, { error: true });
+    toast(`Downloading ${id} failed: ${e}`, { error: true });
   }
-  delete state.downloads.piper;
-  refreshEngine();
-}
-
-async function downloadVoice(key) {
-  state.downloads[key] = { done: 0, total: null };
-  renderSidebar();
-  try {
-    await invoke("voice_download", { key });
-    markInstalled(key, true);
-    toast(`Voice ${key} downloaded.`);
-  } catch (e) {
-    toast(`Downloading ${key} failed: ${e}`, { error: true });
-  }
-  delete state.downloads[key];
+  delete state.downloads[id];
   refreshEngine();
 }
 
@@ -473,6 +499,7 @@ async function openBook(id) {
   state.speaking = null;
   state.chapterFilter = "";
   state.voiceLang = null;
+  state.models = null;
   const pos = view.entry.position;
   await loadChapter(Math.min(pos.chapter, Math.max(view.toc.length - 1, 0)), {
     scroll: "position", paragraph: pos.paragraph,
@@ -743,7 +770,7 @@ function onSpeechState(ev) {
   if (ev.error === "NO_VOICE") {
     const lang = state.book?.entry.language || "en";
     toast(`No voice for this book's language (${lang}) yet. Download one to read aloud.`, {
-      actions: [{ label: "Open Voices", run: () => { state.voiceLang = null; setViewIfHidden("voices"); refreshEngine(); } }],
+      actions: [{ label: "Open Voices", run: () => { state.voiceLang = null; state.models = null; setViewIfHidden("voices"); refreshEngine(); } }],
     });
   } else if (ev.error) {
     toast("Read aloud stopped: " + ev.error, { error: true });

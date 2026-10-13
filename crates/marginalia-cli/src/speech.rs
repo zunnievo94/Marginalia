@@ -6,9 +6,9 @@ use std::thread;
 
 use anyhow::{bail, Context, Result};
 use marginalia_core::text::speech_chunks;
-use marginalia_tts::catalog::{self, InstalledVoice};
+use marginalia_tts::engine::{Engine, Options};
 use marginalia_tts::espeak::EspeakEngine;
-use marginalia_tts::piper::{self, PiperEngine, PiperOptions};
+use marginalia_tts::models;
 use marginalia_tts::{Audio, Synthesizer};
 
 use crate::{confirm, progress_bar, EngineKind, TtsArgs};
@@ -142,22 +142,22 @@ impl Output {
 fn build_engine(lang: &str, args: &TtsArgs) -> Result<Box<dyn Synthesizer>> {
     match args.engine {
         EngineKind::Espeak => Ok(Box::new(espeak_engine(lang, args)?)),
-        EngineKind::Piper => Ok(Box::new(piper_engine(lang, args)?)),
-        EngineKind::Auto => match piper_engine(lang, args) {
+        EngineKind::Neural => Ok(Box::new(neural_engine(lang, args)?)),
+        EngineKind::Auto => match neural_engine(lang, args) {
             Ok(engine) => Ok(Box::new(engine)),
-            Err(piper_err) => match espeak_engine(lang, args) {
+            Err(neural_err) => match espeak_engine(lang, args) {
                 Ok(engine) => {
-                    eprintln!("Piper unavailable ({piper_err:#}); using eSpeak NG.");
+                    eprintln!("No neural voice ({neural_err:#}); using eSpeak NG.");
                     Ok(Box::new(engine))
                 }
-                Err(_) => Err(piper_err),
+                Err(_) => Err(neural_err),
             },
         },
     }
 }
 
 fn espeak_engine(lang: &str, args: &TtsArgs) -> Result<EspeakEngine> {
-    // A Piper key such as en_US-lessac-medium is not an eSpeak voice.
+    // A model id is not an eSpeak voice.
     let voice = match &args.voice {
         Some(v) if args.engine == EngineKind::Espeak => v.clone(),
         _ => marginalia_tts::espeak::voice_for_language(lang),
@@ -165,61 +165,56 @@ fn espeak_engine(lang: &str, args: &TtsArgs) -> Result<EspeakEngine> {
     EspeakEngine::new(&voice, args.speed)
 }
 
-fn piper_engine(lang: &str, args: &TtsArgs) -> Result<PiperEngine> {
-    let voice = resolve_voice(lang, args)?;
-    let executable = match piper::find_executable() {
-        Some(p) => p,
-        None => {
-            if !confirm(
-                &format!(
-                    "The Piper speech engine ({}) is not installed. Download it?",
-                    piper::RELEASE
-                ),
-                args.yes,
-            )? {
-                bail!("Piper is not installed");
-            }
-            let p = piper::install(&mut progress_bar("Piper runtime"))?;
-            eprintln!();
-            p
-        }
+fn neural_engine(lang: &str, args: &TtsArgs) -> Result<Engine> {
+    let pack = resolve_model(lang, args)?;
+    let speaker = match &args.speaker {
+        None => None,
+        Some(s) => Some(match s.parse::<i32>() {
+            Ok(i) => i,
+            Err(_) => pack
+                .speakers
+                .iter()
+                .position(|n| n.eq_ignore_ascii_case(s))
+                .with_context(|| format!("{} has no speaker {s:?}", pack.id))?
+                as i32,
+        }),
     };
-    let opts = PiperOptions {
+    let opts = Options {
+        speaker,
         speed: args.speed,
-        speaker: args.speaker,
+        lang: lang.to_string(),
     };
-    PiperEngine::new(&executable, &voice, &opts)
+    let engine = Engine::new(pack, &opts)?;
+    eprintln!("Voice: {}", engine.label);
+    Ok(engine)
 }
 
-/// Pick the Piper voice: explicit `--voice`, else an installed voice for the
-/// book's language, else the catalog default (downloaded after asking).
-fn resolve_voice(lang: &str, args: &TtsArgs) -> Result<InstalledVoice> {
-    let key = match &args.voice {
-        Some(key) => key.clone(),
+/// The model to use: `--voice`, else the best installed one for the
+/// language, else the recommended one (downloaded after asking).
+fn resolve_model(lang: &str, args: &TtsArgs) -> Result<&'static models::Pack> {
+    let pack = match &args.voice {
+        Some(id) => models::find(id)
+            .with_context(|| format!("unknown voice model {id:?}; see `marginalia voices list`"))?,
         None => {
-            if let Some(v) = catalog::installed_for_language(lang)? {
-                return Ok(v);
+            if let Some(p) = models::best_installed(lang) {
+                return Ok(p);
             }
-            let voices = catalog::load(false)?;
-            catalog::default_for_language(&voices, lang)
-                .with_context(|| format!("no Piper voice for language {lang:?}"))?
-                .key
-                .clone()
+            models::recommended(lang).with_context(|| format!("no voice model speaks {lang:?}"))?
         }
     };
-    if let Some(v) = InstalledVoice::find(&key)? {
-        return Ok(v);
+    if !pack.is_installed() {
+        let mb = pack.size as f64 / 1e6;
+        if !confirm(
+            &format!(
+                "Voice model {} ({mb:.0} MB) is not downloaded. Download it now?",
+                pack.id
+            ),
+            args.yes,
+        )? {
+            bail!("voice model {} is not downloaded", pack.id);
+        }
+        pack.download(&mut progress_bar(&pack.id))?;
+        eprintln!();
     }
-    let voices = catalog::load(false)?;
-    let voice = catalog::find(&voices, &key)?;
-    let mb = voice.download_size() as f64 / 1e6;
-    if !confirm(
-        &format!("Voice {key} ({mb:.0} MB) is not downloaded. Download it now?"),
-        args.yes,
-    )? {
-        bail!("voice {key} is not downloaded");
-    }
-    let installed = voice.download(&mut progress_bar(&key))?;
-    eprintln!();
-    Ok(installed)
+    Ok(pack)
 }

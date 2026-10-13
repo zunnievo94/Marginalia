@@ -1,6 +1,6 @@
 [package]
 name = "marginalia-tts"
-description = "Text-to-speech for Marginalia: Piper neural voices with on-demand model downloads, eSpeak NG fallback"
+description = "Text-to-speech for Marginalia: Piper, Kokoro and Supertonic voices run in-process with sherpa-onnx, downloaded on demand"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,12 +17,13 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+bzip2 = "0.5"
 directories = "6"
-flate2 = "1"
 hound = "3"
-md-5 = "0.10"
 rodio = { version = "0.21", optional = true, default-features = false, features = ["playback"] }
+# ONNX Runtime + espeak-ng, statically linked (prebuilt libraries are
+# downloaded by its build script).
+sherpa-onnx = "1.13.8"
 tar = "0.4"
 tempfile = "3"
 ureq = { version = "3", features = ["platform-verifier"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }

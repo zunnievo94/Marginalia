@@ -123,12 +123,20 @@ pub struct Settings {
     /// Reading column width in characters.
     pub width: u32,
     pub sidebar_width: u32,
-    /// Piper voice key; `None` picks one for the book's language.
-    pub voice: Option<String>,
+    /// Chosen voice per language family (`vi`, `en`, `zh`...). Languages
+    /// without a choice use the best installed model.
+    pub voices: std::collections::BTreeMap<String, VoicePref>,
     pub speed: f32,
     /// Whether the notes panel on the right is open.
     pub notes_open: bool,
     pub notes_width: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoicePref {
+    /// Voice model id from the catalog.
+    pub model: String,
+    pub speaker: Option<i32>,
 }
 
 impl Default for Settings {
@@ -140,7 +148,7 @@ impl Default for Settings {
             line_height: 1.7,
             width: 70,
             sidebar_width: 280,
-            voice: None,
+            voices: Default::default(),
             speed: 1.0,
             notes_open: false,
             notes_width: 300,

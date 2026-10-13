@@ -12,9 +12,9 @@ use anyhow::{bail, Result};
 use marginalia_core::text::{paragraph_sentences, speech_chunks};
 use marginalia_core::Book;
 use marginalia_tts::audio::{Player, PlayerHandle};
-use marginalia_tts::catalog::{self, InstalledVoice};
+use marginalia_tts::engine::{Engine, Options};
 use marginalia_tts::espeak::EspeakEngine;
-use marginalia_tts::piper::{self, PiperEngine, PiperOptions};
+use marginalia_tts::models::{self, normalize_lang};
 use marginalia_tts::{Audio, Synthesizer};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -70,6 +70,60 @@ impl Speech {
         thread::spawn(move || {
             let result = run(&app, &book_id, &book, start, &settings, &cancel, &player);
             // A newer session may already be running; only report for ours.
+            if !cancel.load(Ordering::SeqCst) || result.is_err() {
+                emit_state(
+                    &app,
+                    "stopped",
+                    result.err().map(|e| format!("{e:#}")),
+                    None,
+                );
+            }
+        });
+    }
+
+    /// Speak a short sample with a specific voice (the "try" button).
+    pub fn preview(
+        &self,
+        app: AppHandle,
+        text: String,
+        lang: String,
+        model: String,
+        speaker: Option<i32>,
+        speed: f32,
+    ) {
+        self.stop();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let player = Arc::new(Mutex::new(None));
+        *self.current.lock().unwrap() = Some(Session {
+            cancel: cancel.clone(),
+            player: player.clone(),
+        });
+        thread::spawn(move || {
+            let result = (|| -> Result<()> {
+                emit_state(&app, "loading", None, None);
+                let pack = models::find(&model)
+                    .ok_or_else(|| anyhow::anyhow!("unknown voice model {model}"))?;
+                let opts = Options {
+                    speaker,
+                    speed,
+                    lang,
+                };
+                let mut engine = Engine::new(pack, &opts)?;
+                let out = Player::new()?;
+                *player.lock().unwrap() = Some(out.handle());
+                for chunk in speech_chunks(&text, 400) {
+                    if cancel.load(Ordering::SeqCst) {
+                        return Ok(());
+                    }
+                    let audio = engine.synthesize(&chunk)?;
+                    out.enqueue(&audio);
+                    emit_state(&app, "playing", None, Some(engine.label.clone()));
+                }
+                while out.queued() > 0 && !cancel.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Ok(())
+            })();
             if !cancel.load(Ordering::SeqCst) || result.is_err() {
                 emit_state(
                     &app,
@@ -204,28 +258,34 @@ fn run(
     Ok(())
 }
 
-/// Piper with the chosen (or a language-matching) installed voice, else
-/// eSpeak NG, else an error the UI turns into "install a voice".
+/// The voice model for a language: the user's choice for that language,
+/// else the best installed model that speaks it. Never a model of another
+/// language: an English voice reading Vietnamese is unintelligible, so the
+/// UI offers a download instead.
+pub fn voice_for(lang: &str, settings: &Settings) -> Option<(&'static models::Pack, Option<i32>)> {
+    let family = normalize_lang(lang)
+        .split('_')
+        .next()
+        .unwrap_or("en")
+        .to_string();
+    let chosen = settings
+        .voices
+        .get(&family)
+        .and_then(|pref| Some((models::find(&pref.model)?, pref.speaker)))
+        .filter(|(p, _)| p.is_installed() && p.language_match(lang) > 0);
+    chosen.or_else(|| models::best_installed(lang).map(|p| (p, None)))
+}
+
 fn build_engine(lang: &str, settings: &Settings) -> Result<(Box<dyn Synthesizer>, String)> {
-    if let Some(exe) = piper::find_executable() {
-        let chosen = match &settings.voice {
-            Some(key) => InstalledVoice::find(key)?,
-            None => None,
+    if let Some((pack, speaker)) = voice_for(lang, settings) {
+        let opts = Options {
+            speaker,
+            speed: settings.speed,
+            lang: lang.to_string(),
         };
-        // Never fall back to a voice of another language: an English voice
-        // reading Vietnamese is unintelligible. The UI offers a download.
-        let voice = match chosen {
-            Some(v) => Some(v),
-            None => catalog::installed_for_language(lang)?,
-        };
-        if let Some(voice) = voice {
-            let opts = PiperOptions {
-                speed: settings.speed,
-                speaker: None,
-            };
-            let engine = PiperEngine::new(&exe, &voice, &opts)?;
-            return Ok((Box::new(engine), voice.key));
-        }
+        let engine = Engine::new(pack, &opts)?;
+        let label = engine.label.clone();
+        return Ok((Box::new(engine), label));
     }
     if marginalia_tts::espeak::find_executable().is_some() {
         let voice = marginalia_tts::espeak::voice_for_language(lang);
