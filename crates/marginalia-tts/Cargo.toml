@@ -25,7 +25,7 @@ rodio = { version = "0.21", optional = true, default-features = false, features 
 # downloaded by its build script).
 sherpa-onnx = "1.13.8"
 # VieNeu-TTS voices, sharing the ONNX Runtime linked above.
-vieneu-tts = { git = "https://github.com/zunnievo94/vieneu-tts-rs", rev = "86a082060b921a47f9ffec089f51fc46766ba7e9", default-features = false, features = ["shared-ort"] }
+vieneu-tts = { git = "https://github.com/zunnievo94/vieneu-tts-rs", rev = "ee76ffd33baf999158ca4410c12062a15a12789e", default-features = false, features = ["shared-ort"] }
 tar = "0.4"
 tempfile = "3"
 ureq = { version = "3", features = ["platform-verifier"] }
