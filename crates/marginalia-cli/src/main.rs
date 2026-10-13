@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use marginalia_tts::catalog::{self, InstalledVoice};
+use marginalia_tts::models;
 
 #[derive(Parser)]
 #[command(
@@ -55,16 +55,13 @@ enum Command {
         #[command(flatten)]
         tts: TtsArgs,
     },
-    /// Browse, download and remove Piper voice models.
+    /// Browse, download and remove voice models (Piper, Kokoro, Supertonic).
     Voices {
         #[command(subcommand)]
         command: VoicesCommand,
     },
-    /// Manage the Piper speech engine.
-    Engine {
-        #[command(subcommand)]
-        command: EngineCommand,
-    },
+    /// Show installed voice models and where data is stored.
+    Status,
 }
 
 #[derive(Args, Clone)]
@@ -72,59 +69,50 @@ pub struct TtsArgs {
     /// Speech engine.
     #[arg(long, value_enum, default_value_t = EngineKind::Auto)]
     pub engine: EngineKind,
-    /// Piper voice key (e.g. en_US-lessac-medium) or eSpeak voice (e.g. en-us).
+    /// Voice model id (see `voices list`), or an eSpeak voice with `--engine espeak`.
     #[arg(long)]
     pub voice: Option<String>,
+    /// Speaker of a multi-speaker model: index or name (e.g. af_heart, F1).
+    #[arg(long)]
+    pub speaker: Option<String>,
     /// Speaking speed; 1.0 is normal.
     #[arg(long, default_value_t = 1.0)]
     pub speed: f32,
-    /// Speaker id for multi-speaker Piper voices.
-    #[arg(long)]
-    pub speaker: Option<u32>,
     /// Write audio to this WAV file instead of playing it.
     #[arg(short, long)]
     pub out: Option<PathBuf>,
-    /// Download missing voices/engine without asking.
+    /// Download a missing voice model without asking.
     #[arg(short, long)]
     pub yes: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum EngineKind {
-    /// Piper if possible, otherwise eSpeak NG.
+    /// Neural voice models if possible, otherwise eSpeak NG.
     Auto,
-    /// Piper neural voices (downloaded on demand).
-    Piper,
+    /// Neural voice models (Piper, Kokoro, Supertonic), downloaded on demand.
+    Neural,
     /// eSpeak NG installed on the system.
     Espeak,
 }
 
 #[derive(Subcommand)]
 enum VoicesCommand {
-    /// List voices from the Piper catalog.
+    /// List voice models.
     List {
-        /// Only voices for this language, e.g. `en`, `en_GB`, `fr`.
+        /// Only models for this language, e.g. `vi`, `en_GB`, `zh`.
         #[arg(long)]
         lang: Option<String>,
-        /// Only voices already downloaded.
+        /// Only models already downloaded.
         #[arg(long)]
         installed: bool,
-        /// Re-download the catalog.
-        #[arg(long)]
-        refresh: bool,
     },
+    /// Show a model's speakers and details.
+    Show { id: String },
     /// Download a voice model.
-    Download { key: String },
+    Download { id: String },
     /// Delete a downloaded voice model.
-    Remove { key: String },
-}
-
-#[derive(Subcommand)]
-enum EngineCommand {
-    /// Download the Piper runtime for this platform.
-    Install,
-    /// Show which engines are available and where data is stored.
-    Status,
+    Remove { id: String },
 }
 
 fn main() {
@@ -194,95 +182,96 @@ fn run(cli: Cli) -> Result<()> {
             speech::speak(vec![part], &lang, &tts)?;
         }
         Command::Voices { command } => voices(command)?,
-        Command::Engine { command } => match command {
-            EngineCommand::Install => {
-                let path = marginalia_tts::piper::install(&mut progress_bar("Piper runtime"))?;
-                eprintln!();
-                println!("Installed Piper to {}", path.display());
+        Command::Status => {
+            let data = marginalia_tts::paths::data_dir()?;
+            println!("Data directory: {}", data.display());
+            match marginalia_tts::espeak::find_executable() {
+                Some(p) => println!("eSpeak NG:      {}", p.display()),
+                None => println!("eSpeak NG:      not found (optional fallback)"),
             }
-            EngineCommand::Status => {
-                let data = marginalia_tts::paths::data_dir()?;
-                println!("Data directory: {}", data.display());
-                match marginalia_tts::piper::find_executable() {
-                    Some(p) => println!("Piper:          {}", p.display()),
-                    None => println!("Piper:          not installed (`marginalia engine install`)"),
-                }
-                match marginalia_tts::espeak::find_executable() {
-                    Some(p) => println!("eSpeak NG:      {}", p.display()),
-                    None => println!("eSpeak NG:      not found"),
-                }
-                let installed = InstalledVoice::list()?;
-                println!("Voices:         {}", installed.len());
-                for v in installed {
-                    println!("  {}", v.key);
-                }
-                println!(
-                    "Playback:       {}",
-                    if cfg!(feature = "playback") {
-                        "enabled"
-                    } else {
-                        "disabled (use --out FILE.wav)"
-                    }
-                );
+            let installed = models::installed();
+            println!("Voice models:   {}", installed.len());
+            for p in installed {
+                println!("  {:<48} {}", p.id, p.name);
             }
-        },
+            println!(
+                "Playback:       {}",
+                if cfg!(feature = "playback") {
+                    "enabled"
+                } else {
+                    "disabled (use --out FILE.wav)"
+                }
+            );
+        }
     }
     Ok(())
 }
 
 fn voices(command: VoicesCommand) -> Result<()> {
     match command {
-        VoicesCommand::List {
-            lang,
-            installed,
-            refresh,
-        } => {
-            if installed && !refresh {
-                for v in InstalledVoice::list()? {
-                    println!("{}", v.key);
-                }
-                return Ok(());
-            }
-            let voices = catalog::load(refresh)?;
-            let lang = lang.map(|l| l.replace('-', "_").to_lowercase());
-            for v in &voices {
-                if let Some(l) = &lang {
-                    let code = v.language.code.to_lowercase();
-                    if &code != l && v.language.family.to_lowercase() != *l {
-                        continue;
-                    }
-                }
-                let is_installed = v.is_installed();
+        VoicesCommand::List { lang, installed } => {
+            let packs: Vec<&models::Pack> = match &lang {
+                Some(l) => models::for_language(l),
+                None => models::catalog().iter().collect(),
+            };
+            for p in packs {
+                let is_installed = p.is_installed();
                 if installed && !is_installed {
                     continue;
                 }
+                let langs = if p.languages.len() > 4 {
+                    format!("{} languages", p.languages.len())
+                } else {
+                    p.languages.join(", ")
+                };
                 println!(
-                    "{:<36} {:<28} {:<7} {:>4} MB {}",
-                    v.key,
-                    format!(
-                        "{} ({})",
-                        v.language.name_english, v.language.country_english
-                    ),
-                    v.quality,
-                    v.download_size() / 1_000_000,
+                    "{:<48} {:<10} {:<22} {:<16} {:>4} MB {}",
+                    p.id,
+                    format!("{:?}", p.kind).to_lowercase(),
+                    p.name,
+                    langs,
+                    p.size / 1_000_000,
                     if is_installed { "[installed]" } else { "" }
                 );
             }
-        }
-        VoicesCommand::Download { key } => {
-            let voices = catalog::load(false)?;
-            let voice = catalog::find(&voices, &key)?;
-            let v = voice.download(&mut progress_bar(&key))?;
-            eprintln!();
-            println!("Downloaded {} to {}", v.key, v.model.display());
-        }
-        VoicesCommand::Remove { key } => match InstalledVoice::find(&key)? {
-            Some(v) => {
-                v.remove()?;
-                println!("Removed {key}");
+            if let Some(l) = lang {
+                if let Some(r) = models::recommended(&l) {
+                    println!("\nRecommended for {l}: {}", r.id);
+                }
             }
-            None => bail!("voice {key:?} is not installed"),
-        },
+        }
+        VoicesCommand::Show { id } => {
+            let p = models::find(&id).with_context(|| format!("unknown voice model {id:?}"))?;
+            println!("{} ({:?})", p.name, p.kind);
+            println!("Id:        {}", p.id);
+            println!("Languages: {}", p.languages.join(", "));
+            println!("Size:      {} MB", p.size / 1_000_000);
+            println!("License:   {}", p.license);
+            println!("Installed: {}", p.is_installed());
+            if !p.note.is_empty() {
+                println!("Note:      {}", p.note);
+            }
+            if !p.speakers.is_empty() {
+                println!("Speakers:");
+                for (i, name) in p.speakers.iter().enumerate() {
+                    println!("  {i:>4}  {name}");
+                }
+            }
+        }
+        VoicesCommand::Download { id } => {
+            let p = models::find(&id).with_context(|| format!("unknown voice model {id:?}"))?;
+            p.download(&mut progress_bar(&id))?;
+            eprintln!();
+            println!("Installed {} in {}", p.id, p.dir()?.display());
+        }
+        VoicesCommand::Remove { id } => {
+            let p = models::find(&id).with_context(|| format!("unknown voice model {id:?}"))?;
+            if !p.is_installed() {
+                bail!("voice model {id:?} is not installed");
+            }
+            p.remove()?;
+            println!("Removed {id}");
+        }
     }
     Ok(())
 }

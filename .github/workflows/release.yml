@@ -42,8 +42,12 @@ jobs:
           - macOS says the app is damaged or from an unidentified developer: after
             copying it to Applications, run `xattr -cr /Applications/Marginalia.app`.
 
-          Read-aloud downloads the Piper engine (~25 MB) and a voice (20–100 MB)
-          on first use, from the Voices view.
+          **License**: GPL-3.0-or-later. The source code of this release is
+          this tag; third-party components are listed in THIRD_PARTY_NOTICES.md.
+
+          Read-aloud runs on your computer. The first time, download a voice
+          model (30–350 MB) for your book's language in the Voices view; for
+          Vietnamese the recommended one is Piper vais1000.
           NOTES
           gh release view "$TAG" >/dev/null 2>&1 ||
             gh release create "$TAG" --target "$GITHUB_SHA" \
@@ -158,7 +162,7 @@ jobs:
         run: |
           name=marginalia-cli-${{ matrix.target }}
           mkdir "$name"
-          cp README.md LICENSE "$name"/
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "$name"/
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp target/${{ matrix.target }}/release/marginalia.exe "$name"/
             7z a "$name.zip" "$name" >/dev/null

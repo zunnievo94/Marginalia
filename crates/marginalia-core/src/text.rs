@@ -60,6 +60,30 @@ pub fn paragraph_sentences(text: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// A paragraph as the reader shows it: sentences joined by a space, except
+/// after a CJK sentence (Chinese/Japanese are written without spaces).
+pub fn display_paragraph(sentences: &[String]) -> String {
+    let mut out = String::new();
+    for (i, s) in sentences.iter().enumerate() {
+        if i > 0 {
+            let prev_cjk = sentences[i - 1]
+                .trim_end_matches(['"', '\'', '”', '’', '」', '』', '）', ')'])
+                .chars()
+                .last()
+                // Same ranges as the reader UI's CJK_END (not Hangul:
+                // Korean separates sentences with spaces).
+                .is_some_and(|c| {
+                    matches!(c, '\u{3000}'..='\u{30ff}' | '\u{3400}'..='\u{9fff}' | '\u{f900}'..='\u{faff}' | '\u{ff00}'..='\u{ffef}')
+                });
+            if !prev_cjk {
+                out.push(' ');
+            }
+        }
+        out.push_str(s);
+    }
+    out
+}
+
 /// Sentences of one paragraph, or the paragraph itself if it has none.
 pub fn sentences_or_whole(paragraph: &str) -> Vec<String> {
     let s = sentences(paragraph);

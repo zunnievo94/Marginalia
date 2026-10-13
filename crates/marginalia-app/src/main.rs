@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod bookmarks;
 mod notes;
 mod speech;
 mod store;
@@ -12,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use marginalia_core::text::sentences_or_whole;
 use marginalia_core::{Block, Book};
-use marginalia_tts::catalog::{self, InstalledVoice};
+use marginalia_tts::models;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -312,6 +313,74 @@ async fn notes_export(
     Ok(Some(path.display().to_string()))
 }
 
+// --------------------------------------------------------- search, bookmarks
+
+#[derive(Serialize)]
+struct SearchHit {
+    chapter: usize,
+    paragraph: usize,
+    start: usize,
+    end: usize,
+    before: String,
+    matched: String,
+    after: String,
+}
+
+#[derive(Serialize)]
+struct SearchResult {
+    hits: Vec<SearchHit>,
+    /// More matches exist than were returned.
+    truncated: bool,
+}
+
+/// Case- and accent-insensitive search through the whole book.
+#[tauri::command]
+async fn book_search(
+    state: State<'_, AppState>,
+    id: String,
+    query: String,
+) -> CmdResult<SearchResult> {
+    const LIMIT: usize = 500;
+    let book = state.book(&id)?;
+    let hits = tauri::async_runtime::spawn_blocking(move || {
+        marginalia_core::search::search(&book, &query, LIMIT + 1)
+    })
+    .await
+    .map_err(err)?;
+    let truncated = hits.len() > LIMIT;
+    Ok(SearchResult {
+        hits: hits
+            .into_iter()
+            .take(LIMIT)
+            .map(|h| SearchHit {
+                chapter: h.chapter,
+                paragraph: h.paragraph,
+                start: h.start,
+                end: h.end,
+                before: h.before,
+                matched: h.matched,
+                after: h.after,
+            })
+            .collect(),
+        truncated,
+    })
+}
+
+#[tauri::command]
+fn bookmarks_list(id: String) -> Vec<bookmarks::Bookmark> {
+    bookmarks::load(&id)
+}
+
+#[tauri::command]
+fn bookmark_add(id: String, position: Position, label: String) -> CmdResult<bookmarks::Bookmark> {
+    bookmarks::add(&id, position, label).map_err(err)
+}
+
+#[tauri::command]
+fn bookmark_remove(id: String, bookmark_id: String) -> CmdResult<()> {
+    bookmarks::remove(&id, &bookmark_id).map_err(err)
+}
+
 // --------------------------------------------------------------- settings
 
 #[tauri::command]
@@ -364,11 +433,22 @@ fn tts_stop(app: AppHandle, state: State<AppState>) {
     );
 }
 
+#[tauri::command]
+fn tts_preview(
+    app: AppHandle,
+    state: State<AppState>,
+    text: String,
+    lang: String,
+    model: String,
+    speaker: Option<i32>,
+) {
+    let speed = state.settings.lock().unwrap().speed;
+    state.speech.preview(app, text, lang, model, speaker, speed);
+}
+
 #[derive(Serialize)]
 struct EngineStatus {
-    piper: Option<String>,
     espeak: Option<String>,
-    piper_supported: bool,
     installed: Vec<String>,
     data_dir: String,
 }
@@ -376,18 +456,31 @@ struct EngineStatus {
 #[tauri::command]
 fn engine_status() -> CmdResult<EngineStatus> {
     Ok(EngineStatus {
-        piper: marginalia_tts::piper::find_executable().map(|p| p.display().to_string()),
         espeak: marginalia_tts::espeak::find_executable().map(|p| p.display().to_string()),
-        piper_supported: marginalia_tts::piper::release_asset().is_some(),
-        installed: InstalledVoice::list()
-            .map_err(err)?
+        installed: models::installed()
             .into_iter()
-            .map(|v| v.key)
+            .map(|p| p.id.clone())
             .collect(),
         data_dir: marginalia_tts::paths::data_dir()
             .map_err(err)?
             .display()
             .to_string(),
+    })
+}
+
+/// The voice that would read a book in `lang` right now, if any.
+#[derive(Serialize)]
+struct CurrentVoice {
+    model: String,
+    speaker: i32,
+}
+
+#[tauri::command]
+fn voice_current(state: State<AppState>, lang: String) -> Option<CurrentVoice> {
+    let settings = state.settings.lock().unwrap();
+    speech::voice_for(&lang, &settings).map(|(pack, speaker)| CurrentVoice {
+        model: pack.id.clone(),
+        speaker: speaker.unwrap_or_else(|| pack.default_speaker(&lang)),
     })
 }
 
@@ -403,8 +496,8 @@ fn progress_emitter(app: &AppHandle, key: &str) -> impl FnMut(u64, Option<u64>) 
     let key = key.to_string();
     let mut last = 0u64;
     move |done, total| {
-        // Throttle to ~every 256 KB to keep the IPC channel quiet.
-        if done.saturating_sub(last) >= 256 * 1024 || Some(done) == total {
+        // Throttle to ~every 512 KB to keep the IPC channel quiet.
+        if done.saturating_sub(last) >= 512 * 1024 || Some(done) == total {
             last = done;
             let _ = app.emit(
                 "download-progress",
@@ -418,59 +511,38 @@ fn progress_emitter(app: &AppHandle, key: &str) -> impl FnMut(u64, Option<u64>) 
     }
 }
 
-#[tauri::command]
-async fn engine_install(app: AppHandle) -> CmdResult<String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut progress = progress_emitter(&app, "piper");
-        marginalia_tts::piper::install(&mut progress).map(|p| p.display().to_string())
-    })
-    .await
-    .map_err(err)?
-    .map_err(|e| format!("{e:#}"))
-}
-
 #[derive(Serialize)]
-struct VoiceInfo {
-    key: String,
-    language_code: String,
-    language: String,
-    country: String,
-    quality: String,
-    speakers: u32,
-    size: u64,
+struct ModelInfo {
+    #[serde(flatten)]
+    pack: &'static models::Pack,
     installed: bool,
+    /// Best model for each language comes first in `models_for`.
+    recommended: bool,
+}
+
+/// Voice models, all or those speaking `lang` (best first).
+#[tauri::command]
+fn models_list(lang: Option<String>) -> Vec<ModelInfo> {
+    let recommended = lang.as_deref().and_then(models::recommended).map(|p| &p.id);
+    let packs: Vec<&'static models::Pack> = match &lang {
+        Some(l) => models::for_language(l),
+        None => models::catalog().iter().collect(),
+    };
+    packs
+        .into_iter()
+        .map(|pack| ModelInfo {
+            installed: pack.is_installed(),
+            recommended: Some(&pack.id) == recommended,
+            pack,
+        })
+        .collect()
 }
 
 #[tauri::command]
-async fn voices_catalog(refresh: bool) -> CmdResult<Vec<VoiceInfo>> {
-    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Vec<VoiceInfo>> {
-        let installed: Vec<String> = InstalledVoice::list()?.into_iter().map(|v| v.key).collect();
-        Ok(catalog::load(refresh)?
-            .into_iter()
-            .map(|v| VoiceInfo {
-                installed: installed.contains(&v.key),
-                size: v.download_size(),
-                key: v.key,
-                language_code: v.language.code,
-                language: v.language.name_english,
-                country: v.language.country_english,
-                quality: v.quality,
-                speakers: v.num_speakers,
-            })
-            .collect())
-    })
-    .await
-    .map_err(err)?
-    .map_err(|e| format!("{e:#}"))
-}
-
-#[tauri::command]
-async fn voice_download(app: AppHandle, key: String) -> CmdResult<()> {
+async fn model_download(app: AppHandle, id: String) -> CmdResult<()> {
     tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<()> {
-        let voices = catalog::load(false)?;
-        let voice = catalog::find(&voices, &key)?;
-        voice.download(&mut progress_emitter(&app, &key))?;
-        Ok(())
+        let pack = models::find(&id).ok_or_else(|| anyhow::anyhow!("unknown voice model {id}"))?;
+        pack.download(&mut progress_emitter(&app, &id))
     })
     .await
     .map_err(err)?
@@ -478,9 +550,10 @@ async fn voice_download(app: AppHandle, key: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
-fn voice_remove(key: String) -> CmdResult<()> {
-    match InstalledVoice::find(&key).map_err(err)? {
-        Some(v) => v.remove().map_err(err),
+fn model_remove(state: State<AppState>, id: String) -> CmdResult<()> {
+    state.speech.stop();
+    match models::find(&id) {
+        Some(p) => p.remove().map_err(err),
         None => Ok(()),
     }
 }
@@ -513,6 +586,10 @@ fn main() {
             book_open,
             chapter_get,
             position_save,
+            book_search,
+            bookmarks_list,
+            bookmark_add,
+            bookmark_remove,
             notes_list,
             note_save,
             note_delete,
@@ -523,11 +600,12 @@ fn main() {
             tts_pause,
             tts_resume,
             tts_stop,
+            tts_preview,
             engine_status,
-            engine_install,
-            voices_catalog,
-            voice_download,
-            voice_remove,
+            voice_current,
+            models_list,
+            model_download,
+            model_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Marginalia");

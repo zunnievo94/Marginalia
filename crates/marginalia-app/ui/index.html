@@ -12,6 +12,9 @@
       <button class="activity" data-view="chapters" title="Chapters (Ctrl+1)">
         <svg viewBox="0 0 24 24"><path d="M4 6h2v2H4zm4 0h12v2H8zM4 11h2v2H4zm4 0h12v2H8zm-4 5h2v2H4zm4 0h12v2H8z"/></svg>
       </button>
+      <button class="activity" data-view="search" title="Search in book (Ctrl+F)">
+        <svg viewBox="0 0 24 24"><path d="M10 3a7 7 0 0 1 5.6 11.2l5.1 5.1-1.4 1.4-5.1-5.1A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg>
+      </button>
       <button class="activity" data-view="library" title="Library (Ctrl+2)">
         <svg viewBox="0 0 24 24"><path d="M4 4h4v16H4zm5 0h4v16H9zm5.2 1.1 3.9-1 4 15.5-3.9 1z"/></svg>
       </button>
@@ -37,6 +40,9 @@
         <span class="grow"></span>
         <button class="icon-btn" id="btn-prev" title="Previous chapter (←)">‹</button>
         <button class="icon-btn" id="btn-next" title="Next chapter (→)">›</button>
+        <button class="icon-btn" id="btn-bookmark" title="Bookmark this place (Ctrl+D)">
+          <svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4zm2 2v12.3l4-2.7 4 2.7V5z"/></svg>
+        </button>
         <button class="icon-btn" id="btn-notes" title="Toggle notes panel (Ctrl+Shift+M)">
           <svg viewBox="0 0 24 24"><path d="M4 3h12l4 4v14H4zm2 2v14h12V8h-3V5zm2 5h8v2H8zm0 4h8v2H8z"/></svg>
         </button>
@@ -46,11 +52,13 @@
 
     <aside id="notes-panel" aria-label="Notes">
       <header class="panel-title">
-        <span>Notes</span><span class="badge" id="notes-count">0</span><span class="grow"></span>
+        <button class="panel-tab" data-tab="notes">Notes <span class="badge" id="notes-count">0</span></button>
+        <button class="panel-tab" data-tab="bookmarks">Bookmarks <span class="badge" id="bookmarks-count">0</span></button>
+        <span class="grow"></span>
         <button class="icon-btn" id="notes-export" title="Export notes as Markdown">⤓</button>
         <button class="icon-btn" id="notes-close" title="Close">×</button>
       </header>
-      <div class="filter"><input type="search" id="notes-filter" placeholder="Filter notes"></div>
+      <div class="filter"><input type="search" id="notes-filter" placeholder="Filter"></div>
       <div id="notes-list"></div>
     </aside>
   </div>

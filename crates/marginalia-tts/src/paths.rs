@@ -1,4 +1,4 @@
-//! Where Marginalia keeps downloaded voices and the Piper runtime.
+//! Where Marginalia keeps downloaded voice models.
 
 use std::path::PathBuf;
 
@@ -17,12 +17,7 @@ pub fn data_dir() -> Result<PathBuf> {
         .context("could not determine a data directory; set MARGINALIA_DATA_DIR")
 }
 
-/// Directory holding downloaded voice models (`<name>.onnx` + `.onnx.json`).
-pub fn voices_dir() -> Result<PathBuf> {
-    Ok(data_dir()?.join("voices"))
-}
-
-/// Directory the Piper runtime is extracted into.
-pub fn engine_dir() -> Result<PathBuf> {
-    Ok(data_dir()?.join("engine"))
+/// Directory holding downloaded voice models, one sub-directory each.
+pub fn models_dir() -> Result<PathBuf> {
+    Ok(data_dir()?.join("models"))
 }

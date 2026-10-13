@@ -11,6 +11,7 @@ const CJK_END = /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]["'”’
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const VIEW_TITLES = {
   chapters: "Chapters",
+  search: "Search",
   library: "Library",
   voices: "Voices",
   settings: "Settings",
@@ -29,12 +30,16 @@ const state = {
   tts: "stopped", // loading | playing | paused | stopped
   voiceLabel: "",
   engine: null,
-  catalog: null,
-  catalogError: null,
-  voiceLang: null,
+  models: null, // voice models for voiceLang
+  current: null, // voice used for voiceLang
+  allLangs: null,
+  voiceLang: null, // language family shown in the Voices view
   downloads: {}, // key -> { done, total }
   chapterFilter: "",
   notes: [], // notes of the open book
+  bookmarks: [], // bookmarks of the open book
+  panelTab: "notes", // right panel: notes | bookmarks
+  search: { query: "", hits: [], truncated: false, active: -1 },
   notesFilter: "",
   editing: null, // note open in the editor
   pendingAnchor: null, // anchor of the current text selection
@@ -154,7 +159,7 @@ function renderSidebar() {
   const content = $("#sidebar-content");
   const scroll = content.scrollTop;
   content.replaceChildren();
-  ({ chapters: renderChapters, library: renderLibrary, voices: renderVoices, settings: renderSettings })[state.view](content);
+  ({ chapters: renderChapters, search: renderSearch, library: renderLibrary, voices: renderVoices, settings: renderSettings })[state.view](content);
   content.scrollTop = scroll;
 }
 
@@ -231,170 +236,195 @@ function renderLibrary(root) {
 }
 
 async function refreshEngine() {
+  if (!state.voiceLang) state.voiceLang = langFamily(state.book?.entry.language || "en");
   try {
-    state.engine = await invoke("engine_status");
+    const [engine, models, current] = await Promise.all([
+      invoke("engine_status"),
+      invoke("models_list", { lang: state.voiceLang }),
+      invoke("voice_current", { lang: state.voiceLang }),
+    ]);
+    Object.assign(state, { engine, models, current });
+    if (!state.allLangs) {
+      const all = await invoke("models_list", { lang: null });
+      state.allLangs = [...new Set(all.flatMap((m) => m.languages.map(langFamily)))];
+    }
   } catch (e) {
     state.engine = null;
-  }
-  if (!state.catalog && !state.catalogError) {
-    invoke("voices_catalog", { refresh: false })
-      .then((c) => { state.catalog = c; })
-      .catch((e) => { state.catalogError = String(e); })
-      .finally(() => state.view === "voices" && renderSidebar());
+    toast(String(e), { error: true });
   }
   if (state.view === "voices") renderSidebar();
 }
 
-function bookLanguage() {
-  return (state.book?.entry.language || "en").replace("-", "_");
+function langFamily(lang) {
+  return String(lang).replace("-", "_").split("_")[0].toLowerCase();
+}
+
+const LANG_NAMES = (() => {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" });
+  } catch {
+    return null;
+  }
+})();
+
+function langName(code) {
+  try {
+    return LANG_NAMES?.of(code.replace("_", "-")) || code;
+  } catch {
+    return code;
+  }
+}
+
+const SAMPLES = {
+  vi: "Xin chào! Đây là giọng đọc của Marginalia. Chúc bạn đọc sách vui vẻ.",
+  en: "Hello! This is how Marginalia sounds when it reads your books aloud.",
+  zh: "你好！这是Marginalia为你朗读书籍的声音。",
+  fr: "Bonjour ! Voici la voix de Marginalia.",
+  de: "Hallo! So klingt Marginalia, wenn es dir vorliest.",
+  es: "¡Hola! Así suena Marginalia cuando te lee un libro.",
+  ja: "こんにちは。これはマージナリアの声です。",
+  ko: "안녕하세요. 마지널리아의 목소리입니다.",
+};
+
+const KOKORO_ACCENTS = { a: "American", b: "British", z: "Chinese", e: "Spanish", f: "French", h: "Hindi", i: "Italian", j: "Japanese", p: "Portuguese" };
+
+// Speakers worth offering for a language, as [index, label] pairs.
+function speakerOptions(model, lang) {
+  const names = model.speakers;
+  if (names.length <= 1) return [];
+  const opts = names.map((n, i) => [i, n]);
+  if (model.kind === "kokoro") {
+    const prefixes = lang === "zh" ? ["z"] : lang === "en" ? ["a", "b"] : Object.keys(KOKORO_ACCENTS);
+    return opts
+      .filter(([, n]) => prefixes.includes(n[0]))
+      .map(([i, n]) => [i, `${n.slice(3).replace(/^./, (c) => c.toUpperCase())} — ${KOKORO_ACCENTS[n[0]] || ""} ${n[1] === "f" ? "female" : "male"}`]);
+  }
+  if (model.kind === "supertonic") {
+    return opts.map(([i, n]) => [i, `${n[0] === "F" ? "Female" : "Male"} ${n.slice(1)}`]);
+  }
+  return opts.map(([i, n]) => [i, /^\d+$/.test(n) ? `Speaker ${n}` : n]);
+}
+
+function setVoice(model, speaker) {
+  const voices = { ...(state.settings.voices || {}) };
+  voices[state.voiceLang] = { model, speaker };
+  updateSetting("voices", voices);
+  invoke("voice_current", { lang: state.voiceLang }).then((c) => {
+    state.current = c;
+    if (state.view === "voices") renderSidebar();
+  });
+}
+
+function previewVoice(model, speaker) {
+  const text = SAMPLES[state.voiceLang] || SAMPLES.en;
+  invoke("tts_preview", { text, lang: state.voiceLang, model, speaker }).catch((e) => toast(String(e), { error: true }));
 }
 
 function renderVoices(root) {
   const eng = state.engine;
-  root.append(el(`<div class="section-header"><span class="grow">Speech engine</span></div>`));
-  if (!eng) {
-    root.append(el(`<div class="hint">Checking…</div>`));
+  if (!eng || !state.models) {
+    root.append(el(`<div class="hint">Loading voices…</div>`));
     return;
   }
-  const piperDl = state.downloads.piper;
-  if (eng.piper) {
-    root.append(el(`<div class="hint">✓ Piper neural TTS is installed.</div>`));
-  } else if (eng.piper_supported) {
-    const box = el(`<div class="hint">Piper gives natural-sounding voices. Download the engine (~25 MB) once.</div>`);
-    root.append(box);
-    if (piperDl) {
-      box.append(progressBar(piperDl));
-    } else {
-      const b = el(`<button class="btn block">Install Piper engine</button>`);
-      b.onclick = installPiper;
-      root.append(b);
-    }
-  } else {
-    root.append(el(`<div class="hint">Piper has no prebuilt binary for this system.</div>`));
-  }
-  root.append(el(`<div class="hint">${eng.espeak ? "✓ eSpeak NG found (fallback voice)." : "eSpeak NG not found (optional fallback)."}</div>`));
+  const lang = state.voiceLang;
+  const name = langName(lang);
 
-  // Installed voices: pick the default.
-  root.append(el(`<div class="section-header"><span class="grow">Installed voices</span><span class="badge">${eng.installed.length}</span></div>`));
-  if (!eng.installed.length) {
-    root.append(el(`<div class="hint">No voices yet — download one below.</div>`));
+  // Language picker.
+  const sel = el(`<div class="filter"><select title="Language"></select></div>`);
+  const select = sel.querySelector("select");
+  const langs = [...new Set([...(state.allLangs || []), lang])]
+    .map((c) => [c, langName(c)])
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  for (const [code, label] of langs) select.append(new Option(label, code, false, code === lang));
+  select.onchange = () => {
+    state.voiceLang = select.value;
+    state.models = null;
+    renderSidebar();
+    refreshEngine();
+  };
+  root.append(sel);
+
+  // The voice currently used for this language.
+  root.append(el(`<div class="section-header"><span class="grow">Voice for ${esc(name)}</span></div>`));
+  const installed = state.models.filter((m) => m.installed);
+  if (!installed.length) {
+    root.append(el(`<div class="hint">No voice for ${esc(name)} yet. Download one below — the ★ one is a good start.</div>`));
   }
-  const auto = el(`<div class="list-item${state.settings.voice ? "" : " active"}"><span class="label">Automatic (match book language)</span></div>`);
-  auto.onclick = () => { updateSetting("voice", null); renderSidebar(); };
-  if (eng.installed.length) root.append(auto);
-  for (const key of eng.installed) {
-    const item = el(`<div class="list-item${state.settings.voice === key ? " active" : ""}">
-      <span class="label">${esc(key)}</span>
-      <span class="actions"><button class="icon-btn" title="Try this voice">▶</button><button class="icon-btn" title="Delete">×</button></span></div>`);
-    item.onclick = () => { updateSetting("voice", key); renderSidebar(); };
-    const [tryBtn, delBtn] = item.querySelectorAll(".actions button");
-    tryBtn.onclick = (e) => {
+  for (const m of installed) {
+    const active = state.current?.model === m.id;
+    const item = el(`<div class="list-item voice-choice${active ? " active" : ""}" style="flex-wrap:wrap">
+      <span class="label">${active ? "● " : "○ "}${esc(m.name)} <span class="meta">${esc(m.kind)}</span></span>
+      <span class="actions" style="display:flex"><button class="icon-btn" title="Listen">▶</button></span></div>`);
+    item.onclick = () => setVoice(m.id, null);
+    const speakers = speakerOptions(m, lang);
+    const currentSpeaker = active ? state.current.speaker : null;
+    item.querySelector("button").onclick = (e) => {
       e.stopPropagation();
-      updateSetting("voice", key);
-      renderSidebar();
-      if (state.book) play(currentStart());
+      previewVoice(m.id, currentSpeaker);
     };
-    delBtn.onclick = async (e) => {
-      e.stopPropagation();
-      await call("voice_remove", { key });
-      if (state.settings.voice === key) updateSetting("voice", null);
-      markInstalled(key, false);
-      refreshEngine();
-    };
+    if (active && speakers.length) {
+      const s = el(`<select style="margin-top:4px" title="Speaker"></select>`);
+      for (const [i, label] of speakers) s.append(new Option(label, i, false, i === currentSpeaker));
+      if (!speakers.some(([i]) => i === currentSpeaker)) s.prepend(new Option("Default", "", true, true));
+      s.onclick = (e) => e.stopPropagation();
+      s.onchange = () => {
+        const sp = s.value === "" ? null : Number(s.value);
+        setVoice(m.id, sp);
+        previewVoice(m.id, sp);
+      };
+      item.append(s);
+    }
     root.append(item);
   }
 
-  // Catalog.
-  root.append(el(`<div class="section-header"><span class="grow">Download voices</span></div>`));
-  if (state.catalogError) {
-    root.append(el(`<div class="hint error-text">Could not load the voice catalog: ${esc(state.catalogError)}</div>`));
-    const retry = el(`<button class="btn block secondary">Retry</button>`);
-    retry.onclick = () => { state.catalogError = null; refreshEngine(); };
-    root.append(retry);
-    return;
-  }
-  if (!state.catalog) {
-    root.append(el(`<div class="hint">Loading catalog…</div>`));
-    return;
-  }
-  const langs = new Map();
-  for (const v of state.catalog) {
-    langs.set(v.language_code, `${v.language} (${v.country || v.language_code})`);
-  }
-  if (!state.voiceLang) {
-    const lang = bookLanguage();
-    const family = lang.split("_")[0];
-    const codes = [...langs.keys()];
-    // "en" -> en_US, "fr" -> fr_FR, "de" -> de_DE ... when only a family is known.
-    const main = family === "en" ? "en_US" : `${family}_${family.toUpperCase()}`;
-    state.voiceLang = codes.find((c) => c.toLowerCase() === lang.toLowerCase())
-      || codes.find((c) => c === main)
-      || codes.find((c) => c.split("_")[0] === family) || "en_US";
-  }
-  const sel = el(`<div class="filter"><select></select></div>`);
-  const select = sel.querySelector("select");
-  for (const [code, name] of [...langs].sort((a, b) => a[1].localeCompare(b[1]))) {
-    select.append(new Option(name, code, false, code === state.voiceLang));
-  }
-  select.onchange = () => { state.voiceLang = select.value; renderSidebar(); };
-  root.append(sel);
-  for (const v of state.catalog.filter((v) => v.language_code === state.voiceLang)) {
-    const dl = state.downloads[v.key];
-    const item = el(`<div class="list-item" style="flex-wrap:wrap">
-      <span class="label">${esc(v.key.split("-").slice(1).join(" · "))}</span>
-      <span class="meta">${mb(v.size)}</span><span class="slot"></span></div>`);
+  // Models that speak this language.
+  root.append(el(`<div class="section-header"><span class="grow">Voice models for ${esc(name)}</span></div>`));
+  if (!state.models.length) root.append(el(`<div class="hint">No voice model speaks ${esc(name)}.</div>`));
+  for (const m of state.models) {
+    const dl = state.downloads[m.id];
+    const item = el(`<div class="model-card${m.recommended ? " recommended" : ""}">
+      <div class="row"><span class="label">${m.recommended ? "★ " : ""}${esc(m.name)}</span>
+        <span class="badge">${esc(m.kind)}</span><span class="meta">${mb(m.size)}</span></div>
+      ${m.note ? `<div class="meta">${esc(m.note)}</div>` : ""}
+      <div class="meta">${m.speakers.length > 1 ? `${m.speakers.length} speakers · ` : ""}${m.languages.length > 3 ? `${m.languages.length} languages` : esc(m.languages.join(", "))} · ${esc(m.license)}</div>
+      <div class="slot"></div></div>`);
     const slot = item.querySelector(".slot");
-    if (v.installed) {
-      slot.append(el(`<span class="badge">installed</span>`));
-    } else if (dl) {
-      item.append(progressBar(dl));
+    if (dl) {
+      slot.append(progressBar(dl));
+    } else if (m.installed) {
+      const rm = el(`<button class="btn small secondary">Remove</button>`);
+      rm.onclick = async () => {
+        await call("model_remove", { id: m.id });
+        refreshEngine();
+      };
+      slot.append(rm);
     } else {
       const b = el(`<button class="btn small">Download</button>`);
-      b.onclick = () => downloadVoice(v.key);
+      b.onclick = () => downloadModel(m.id);
       slot.append(b);
     }
-    item.title = `${v.key} — ${v.quality} quality${v.speakers > 1 ? `, ${v.speakers} speakers` : ""}`;
     root.append(item);
   }
-  root.append(el(`<div class="hint">Voices come from the open <code>rhasspy/piper-voices</code> collection. Each voice has its own license (see its model card). Stored in <code>${esc(eng.data_dir)}</code>.</div>`));
+  root.append(el(`<div class="hint">Voices run on this computer with <code>sherpa-onnx</code>; nothing is sent online.
+    ${eng.espeak ? "eSpeak NG is used as a fallback." : ""} Models are stored in <code>${esc(eng.data_dir)}</code>.</div>`));
 }
 
 function progressBar(dl) {
   const pct = dl.total ? Math.round((dl.done / dl.total) * 100) : 0;
-  const n = el(`<div style="width:100%"><div class="bar"><div style="width:${pct}%"></div></div>
+  return el(`<div style="width:100%"><div class="bar"><div style="width:${pct}%"></div></div>
     <div class="meta">${dl.total ? `${pct}% of ${mb(dl.total)}` : mb(dl.done)}</div></div>`);
-  return n;
 }
 
-function markInstalled(key, installed) {
-  const v = state.catalog?.find((v) => v.key === key);
-  if (v) v.installed = installed;
-}
-
-async function installPiper() {
-  state.downloads.piper = { done: 0, total: null };
+async function downloadModel(id) {
+  state.downloads[id] = { done: 0, total: null };
   renderSidebar();
   try {
-    await invoke("engine_install");
-    toast("Piper engine installed.");
+    await invoke("model_download", { id });
+    toast(`Voice model downloaded.`);
   } catch (e) {
-    toast("Installing Piper failed: " + e, { error: true });
+    toast(`Downloading ${id} failed: ${e}`, { error: true });
   }
-  delete state.downloads.piper;
-  refreshEngine();
-}
-
-async function downloadVoice(key) {
-  state.downloads[key] = { done: 0, total: null };
-  renderSidebar();
-  try {
-    await invoke("voice_download", { key });
-    markInstalled(key, true);
-    toast(`Voice ${key} downloaded.`);
-  } catch (e) {
-    toast(`Downloading ${key} failed: ${e}`, { error: true });
-  }
-  delete state.downloads[key];
+  delete state.downloads[id];
   refreshEngine();
 }
 
@@ -467,12 +497,15 @@ async function openBook(id) {
   const view = await call("book_open", { id });
   state.book = view;
   state.notes = await invoke("notes_list", { id }).catch(() => []);
+  state.bookmarks = await invoke("bookmarks_list", { id }).catch(() => []);
+  state.search = { query: "", hits: [], truncated: false, active: -1 };
   state.notesFilter = "";
   closeNoteEditor();
   state.cursor = null;
   state.speaking = null;
   state.chapterFilter = "";
   state.voiceLang = null;
+  state.models = null;
   const pos = view.entry.position;
   await loadChapter(Math.min(pos.chapter, Math.max(view.toc.length - 1, 0)), {
     scroll: "position", paragraph: pos.paragraph,
@@ -496,6 +529,8 @@ function closeBook() {
   state.blocks = [];
   state.paragraphs = [];
   state.notes = [];
+  state.bookmarks = [];
+  state.search = { query: "", hits: [], truncated: false, active: -1 };
   closeNoteEditor();
   renderContent();
   renderSidebar();
@@ -594,6 +629,8 @@ function renderContent() {
   reading.append(nav);
   content.replaceChildren(reading);
   applyNoteMarks();
+  applySearchMarks();
+  applyBookmarkMarks();
   if (state.speaking?.chapter === state.chapter) highlight(state.speaking, false);
 }
 
@@ -677,7 +714,8 @@ function savePosition(position) {
 
 const onScroll = debounce(() => {
   if (state.book && state.tts === "stopped") savePosition(visiblePosition());
-}, 500);
+  updateBookmarkButton();
+}, 300);
 
 // --------------------------------------------------------------- speech
 
@@ -743,7 +781,7 @@ function onSpeechState(ev) {
   if (ev.error === "NO_VOICE") {
     const lang = state.book?.entry.language || "en";
     toast(`No voice for this book's language (${lang}) yet. Download one to read aloud.`, {
-      actions: [{ label: "Open Voices", run: () => { state.voiceLang = null; setViewIfHidden("voices"); refreshEngine(); } }],
+      actions: [{ label: "Open Voices", run: () => { state.voiceLang = null; state.models = null; setViewIfHidden("voices"); refreshEngine(); } }],
     });
   } else if (ev.error) {
     toast("Read aloud stopped: " + ev.error, { error: true });
@@ -825,6 +863,9 @@ function wire() {
     const mod = e.ctrlKey || e.metaKey;
     if (e.key === "Escape" && !$("#note-editor").hidden) { e.preventDefault(); closeNoteEditor(); return; }
     if (mod && e.shiftKey && e.key.toLowerCase() === "m") { e.preventDefault(); toggleNotesPanel(); return; }
+    if (mod && e.key.toLowerCase() === "f") { e.preventDefault(); openSearch(); return; }
+    if (mod && e.key.toLowerCase() === "d") { e.preventDefault(); toggleBookmark(); return; }
+    if (e.key === "F3" || (mod && e.key.toLowerCase() === "g")) { e.preventDefault(); nextHit(e.shiftKey ? -1 : 1); return; }
     if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); document.body.classList.toggle("sidebar-hidden"); renderSidebar(); }
     else if (mod && e.key.toLowerCase() === "o") { e.preventDefault(); pickBooks(); }
     else if (mod && e.key === "1") { e.preventDefault(); setViewIfHidden("chapters"); }
@@ -1120,7 +1161,11 @@ function renderNotesPanel(activeIds = []) {
   const list = $("#notes-list");
   if (!list) return;
   $("#notes-count").textContent = state.notes.length;
+  $("#bookmarks-count").textContent = state.bookmarks.length;
+  document.querySelectorAll(".panel-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === state.panelTab));
+  $("#notes-export").hidden = state.panelTab !== "notes";
   $("#notes-export").disabled = !state.notes.length;
+  if (state.panelTab === "bookmarks") return renderBookmarks(list);
   list.replaceChildren();
   if (!state.book) {
     list.append(el(`<div class="hint">Open a book to see its notes.</div>`));
@@ -1241,6 +1286,13 @@ function wireNotes() {
   $("#btn-notes").onclick = toggleNotesPanel;
   $("#st-notes").onclick = toggleNotesPanel;
   $("#notes-close").onclick = () => setNotesOpen(false);
+  document.querySelectorAll(".panel-tab").forEach((t) => {
+    t.onclick = () => {
+      state.panelTab = t.dataset.tab;
+      renderNotesPanel();
+    };
+  });
+  $("#btn-bookmark").onclick = toggleBookmark;
   $("#notes-filter").oninput = (e) => {
     state.notesFilter = e.target.value;
     renderNotesPanel();
@@ -1250,6 +1302,245 @@ function wireNotes() {
     const path = await call("notes_export", { id: state.book.entry.id });
     if (path) toast("Notes exported to " + path);
   };
+}
+
+// --------------------------------------------------------------- search
+
+function openSearch() {
+  if (!state.book) return;
+  const selected = window.getSelection().toString().trim();
+  if (selected && selected.length < 80 && !selected.includes("\n")) state.search.query = selected;
+  setViewIfHidden("search");
+  const input = $("#search-input");
+  input?.focus();
+  input?.select();
+  if (selected && state.search.query === selected) runSearch();
+}
+
+function renderSearch(root) {
+  if (!state.book) {
+    root.append(el(`<div class="hint">Open a book to search in it.</div>`));
+    return;
+  }
+  const box = el(`<div class="search-box">
+    <input type="search" id="search-input" placeholder="Search in this book" autocomplete="off" spellcheck="false">
+    <div class="meta" id="search-meta"></div></div>`);
+  const input = box.querySelector("input");
+  input.value = state.search.query;
+  input.oninput = () => {
+    state.search.query = input.value;
+    runSearch();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      nextHit(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Escape") {
+      input.value = "";
+      state.search.query = "";
+      runSearch();
+    }
+  };
+  root.append(box);
+  root.append(el(`<div id="search-results"></div>`));
+  renderSearchResults();
+  setTimeout(() => input.focus(), 0);
+}
+
+const runSearch = debounce(async () => {
+  if (!state.book) return;
+  const query = state.search.query;
+  if (!query.trim()) {
+    Object.assign(state.search, { hits: [], truncated: false, active: -1 });
+  } else {
+    const r = await invoke("book_search", { id: state.book.entry.id, query }).catch((e) => {
+      toast(String(e), { error: true });
+      return null;
+    });
+    if (!r || state.search.query !== query) return; // a newer search is running
+    Object.assign(state.search, { hits: r.hits, truncated: r.truncated, active: -1 });
+  }
+  renderSearchResults();
+  applySearchMarks();
+}, 200);
+
+function renderSearchResults() {
+  const results = $("#search-results");
+  const meta = $("#search-meta");
+  if (!results || !meta) return;
+  const { query, hits, truncated, active } = state.search;
+  results.replaceChildren();
+  if (!query.trim()) {
+    meta.textContent = "Ignores case and accents: “thung lung” finds “thung lũng”. Enter = next, Shift+Enter = previous.";
+    return;
+  }
+  const chapters = new Set(hits.map((h) => h.chapter)).size;
+  meta.textContent = hits.length
+    ? `${hits.length}${truncated ? "+" : ""} result${hits.length === 1 ? "" : "s"} in ${chapters} chapter${chapters === 1 ? "" : "s"}`
+    : "No results.";
+  const frag = document.createDocumentFragment();
+  let chapter = -1;
+  hits.forEach((h, i) => {
+    if (h.chapter !== chapter) {
+      chapter = h.chapter;
+      const count = hits.filter((x) => x.chapter === chapter).length;
+      frag.append(el(`<div class="search-group"><span>${esc(state.book.toc[chapter]?.title || `Chapter ${chapter + 1}`)}</span><span class="badge">${count}</span></div>`));
+    }
+    const lead = h.before.length >= 40 ? "…" + h.before.trimStart() : h.before;
+    const item = el(`<div class="search-hit${i === active ? " active" : ""}" data-i="${i}">${esc(lead)}<mark>${esc(h.matched)}</mark>${esc(h.after)}${h.after.length >= 40 ? "…" : ""}</div>`);
+    item.onclick = () => goToHit(i);
+    frag.append(item);
+  });
+  results.append(frag);
+}
+
+// DOM range of a search hit in the displayed chapter, or null.
+function hitRange(h) {
+  if (h.chapter !== state.chapter) return null;
+  const p = paragraphEl(h.paragraph);
+  if (!p) return null;
+  let { start, end } = h;
+  const text = p.textContent;
+  if (text.slice(start, end) !== h.matched) {
+    // Fall back to the nearest occurrence if the text layout differs.
+    const at = text.indexOf(h.matched);
+    if (at < 0) return null;
+    start = at;
+    end = at + h.matched.length;
+  }
+  const r = document.createRange();
+  r.setStart(...domPoint(p, start));
+  r.setEnd(...domPoint(p, end));
+  return r;
+}
+
+function applySearchMarks() {
+  if (!HAS_HIGHLIGHTS) return;
+  CSS.highlights.delete("search-hit");
+  CSS.highlights.delete("search-current");
+  const { hits, active } = state.search;
+  const ranges = [];
+  hits.forEach((h, i) => {
+    if (i === active) return;
+    const r = hitRange(h);
+    if (r) ranges.push(r);
+  });
+  if (ranges.length) CSS.highlights.set("search-hit", new Highlight(...ranges));
+  const current = hits[active] && hitRange(hits[active]);
+  if (current) CSS.highlights.set("search-current", new Highlight(current));
+}
+
+async function goToHit(i) {
+  const h = state.search.hits[i];
+  if (!h) return;
+  state.search.active = i;
+  await loadChapter(h.chapter, { scroll: "none" });
+  const r = hitRange(h);
+  const content = $("#content");
+  const box = content.getBoundingClientRect();
+  const rect = r ? r.getBoundingClientRect() : paragraphEl(h.paragraph)?.getBoundingClientRect();
+  if (rect && (rect.top < box.top + 30 || rect.bottom > box.bottom - 30)) {
+    content.scrollTop += rect.top - box.top - box.height / 3;
+  }
+  applySearchMarks();
+  document.querySelectorAll(".search-hit").forEach((n) => n.classList.toggle("active", Number(n.dataset.i) === i));
+  document.querySelector(".search-hit.active")?.scrollIntoView({ block: "nearest" });
+  // Reading aloud from here starts at the found sentence.
+  state.cursor = { chapter: h.chapter, paragraph: h.paragraph, sentence: 0 };
+}
+
+function nextHit(dir) {
+  const n = state.search.hits.length;
+  if (!n) return;
+  // From the current chapter, jump to the first hit after the visible text.
+  let i = state.search.active;
+  if (i < 0) i = dir > 0 ? -1 : 0;
+  goToHit((((i + dir) % n) + n) % n);
+}
+
+// ------------------------------------------------------------ bookmarks
+
+function bookmarkPosition() {
+  if (state.speaking && state.speaking.chapter === state.chapter && state.tts !== "stopped") return state.speaking;
+  return visiblePosition();
+}
+
+function bookmarkAt(pos) {
+  return state.bookmarks.find((b) => b.position.chapter === pos.chapter && b.position.paragraph === pos.paragraph);
+}
+
+async function toggleBookmark() {
+  if (!state.book) return;
+  const pos = bookmarkPosition();
+  const id = state.book.entry.id;
+  const existing = bookmarkAt(pos);
+  if (existing) {
+    await call("bookmark_remove", { id, bookmarkId: existing.id });
+    state.bookmarks = state.bookmarks.filter((b) => b.id !== existing.id);
+    toast("Bookmark removed.");
+  } else {
+    const label = paragraphEl(pos.paragraph)?.textContent.trim() || "";
+    const b = await call("bookmark_add", { id, position: { ...pos, sentence: 0 }, label });
+    state.bookmarks = state.bookmarks.concat(b).sort((x, y) =>
+      x.position.chapter - y.position.chapter || x.position.paragraph - y.position.paragraph);
+    toast("Bookmarked.", { timeout: 1500 });
+  }
+  applyBookmarkMarks();
+  if (state.panelTab === "bookmarks") renderNotesPanel();
+  else $("#bookmarks-count").textContent = state.bookmarks.length;
+}
+
+function applyBookmarkMarks() {
+  document.querySelectorAll(".reading p.bookmarked").forEach((p) => p.classList.remove("bookmarked"));
+  for (const b of state.bookmarks) {
+    if (b.position.chapter === state.chapter) paragraphEl(b.position.paragraph)?.classList.add("bookmarked");
+  }
+  updateBookmarkButton();
+}
+
+function updateBookmarkButton() {
+  const btn = $("#btn-bookmark");
+  if (!btn) return;
+  btn.disabled = !state.book;
+  btn.classList.toggle("on", !!(state.book && bookmarkAt(visiblePosition())));
+}
+
+function renderBookmarks(list) {
+  list.replaceChildren();
+  if (!state.book) {
+    list.append(el(`<div class="hint">Open a book to see its bookmarks.</div>`));
+    return;
+  }
+  if (!state.bookmarks.length) {
+    list.append(el(`<div class="hint">No bookmarks yet.<br><br>Press <kbd>Ctrl</kbd>+<kbd>D</kbd> or the ribbon button above the text to bookmark the place you are reading.</div>`));
+    return;
+  }
+  const q = state.notesFilter.trim().toLowerCase();
+  for (const b of state.bookmarks) {
+    if (q && !b.label.toLowerCase().includes(q)) continue;
+    const title = state.book.toc[b.position.chapter]?.title || `Chapter ${b.position.chapter + 1}`;
+    const card = el(`<div class="bookmark-card">
+      <div class="where">${esc(title)}</div><div>${esc(b.label || "(empty paragraph)")}</div>
+      <div class="actions"><button class="icon-btn" title="Remove">×</button></div></div>`);
+    card.onclick = async () => {
+      await loadChapter(b.position.chapter, { scroll: "position", paragraph: b.position.paragraph });
+      const p = paragraphEl(b.position.paragraph);
+      if (p) {
+        p.classList.remove("flash");
+        void p.offsetWidth;
+        p.classList.add("flash");
+      }
+      savePosition(b.position);
+    };
+    card.querySelector("button").onclick = async (e) => {
+      e.stopPropagation();
+      await call("bookmark_remove", { id: state.book.entry.id, bookmarkId: b.id });
+      state.bookmarks = state.bookmarks.filter((x) => x.id !== b.id);
+      applyBookmarkMarks();
+      renderNotesPanel();
+    };
+    list.append(card);
+  }
 }
 
 main();

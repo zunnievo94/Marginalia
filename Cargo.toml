@@ -3,9 +3,9 @@ resolver = "2"
 members = ["crates/marginalia-core", "crates/marginalia-tts", "crates/marginalia-cli", "crates/marginalia-app"]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/zunnievo94/Marginalia"
 rust-version = "1.82"
 

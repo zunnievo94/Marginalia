@@ -12,6 +12,7 @@ epub = "2.1"
 encoding_rs = "0.8"
 html-escape = "0.2"
 thiserror.workspace = true
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 zip = { version = "2", default-features = false, features = ["deflate"] }
