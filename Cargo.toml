@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/zreader-core", "crates/zreader-tts", "crates/zreader-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/zunnievo94/ZReader"
+rust-version = "1.82"
+
+[workspace.dependencies]
+zreader-core = { path = "crates/zreader-core" }
+zreader-tts = { path = "crates/zreader-tts" }
+thiserror = "2"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

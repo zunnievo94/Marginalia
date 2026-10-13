@@ -1,0 +1,28 @@
+[package]
+name = "zreader-tts"
+description = "Text-to-speech for ZReader: Piper neural voices with on-demand model downloads, eSpeak NG fallback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["playback"]
+# Speaker output through the system audio device (ALSA on Linux).
+playback = ["dep:rodio"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+directories = "6"
+flate2 = "1"
+hound = "3"
+md-5 = "0.10"
+rodio = { version = "0.21", optional = true, default-features = false, features = ["playback"] }
+tar = "0.4"
+tempfile = "3"
+ureq = { version = "3", features = ["platform-verifier"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

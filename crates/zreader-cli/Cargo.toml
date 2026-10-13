@@ -1,0 +1,22 @@
+[package]
+name = "zreader-cli"
+description = "ZReader command-line ebook reader with text-to-speech"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "zreader"
+path = "src/main.rs"
+
+[features]
+default = ["playback"]
+playback = ["zreader-tts/playback"]
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+zreader-core.workspace = true
+zreader-tts = { workspace = true, default-features = false }
