@@ -254,7 +254,10 @@ fn voices(command: VoicesCommand) -> Result<()> {
             if !p.speakers.is_empty() {
                 println!("Speakers:");
                 for (i, name) in p.speakers.iter().enumerate() {
-                    println!("  {i:>4}  {name}");
+                    match p.speaker_notes.get(i).filter(|n| !n.is_empty()) {
+                        Some(note) => println!("  {i:>4}  {name} — {note}"),
+                        None => println!("  {i:>4}  {name}"),
+                    }
                 }
             }
         }

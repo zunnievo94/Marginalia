@@ -1,4 +1,5 @@
-//! In-process speech synthesis with sherpa-onnx.
+//! In-process speech synthesis: sherpa-onnx for Piper, Kokoro and
+//! Supertonic, the VieNeu port for VieNeu voices.
 
 use std::collections::HashMap;
 
@@ -10,6 +11,7 @@ use sherpa_onnx::{
 
 use crate::audio::Audio;
 use crate::models::{normalize_lang, Kind, Pack};
+use crate::vieneu::{nano::Nano, turbo::Turbo};
 use crate::Synthesizer;
 
 #[derive(Debug, Clone)]
@@ -37,10 +39,18 @@ impl Default for Options {
 const SUPERTONIC_STEPS: i32 = 16;
 
 pub struct Engine {
-    tts: OfflineTts,
-    generation: GenerationConfig,
+    backend: Backend,
     /// Display name, e.g. "Kokoro v1.0 · af_heart".
     pub label: String,
+}
+
+enum Backend {
+    Sherpa {
+        tts: OfflineTts,
+        generation: GenerationConfig,
+    },
+    Turbo(Box<Turbo>),
+    Nano(Box<Nano>),
 }
 
 fn s(p: std::path::PathBuf) -> Option<String> {
@@ -60,6 +70,9 @@ impl Engine {
             bail!("voice model {} is not downloaded", pack.id);
         }
         let lang = normalize_lang(&opts.lang);
+        if pack.kind.is_vieneu() {
+            return Self::vieneu(pack, opts, &lang);
+        }
         let mut model = OfflineTtsModelConfig {
             num_threads: threads(),
             ..Default::default()
@@ -109,6 +122,7 @@ impl Engine {
                         .join(","),
                 );
             }
+            Kind::VieneuTurbo | Kind::VieneuNano => unreachable!("handled above"),
             Kind::Supertonic => {
                 let f = |prefix: &str| {
                     pack.find_file(|n| n.starts_with(prefix) && n.ends_with(".onnx"))
@@ -159,14 +173,44 @@ impl Engine {
             ..Default::default()
         };
         Ok(Engine {
-            tts,
-            generation,
+            backend: Backend::Sherpa { tts, generation },
             label,
         })
     }
 
+    fn vieneu(pack: &Pack, opts: &Options, lang: &str) -> Result<Engine> {
+        let sid = opts
+            .speaker
+            .unwrap_or_else(|| pack.default_speaker(lang))
+            .clamp(0, pack.speakers.len().max(1) as i32 - 1) as usize;
+        let voice = pack
+            .speakers
+            .get(sid)
+            .with_context(|| format!("voice model {} lists no voices", pack.id))?;
+        let dir = pack.dir()?;
+        let backend = match pack.kind {
+            // An autoregressive model: it has no speed control.
+            Kind::VieneuTurbo => Backend::Turbo(Box::new(
+                Turbo::new(&dir, voice)
+                    .with_context(|| format!("could not load voice model {}", pack.id))?,
+            )),
+            _ => Backend::Nano(Box::new(
+                Nano::new(&dir, voice, opts.speed)
+                    .with_context(|| format!("could not load voice model {}", pack.id))?,
+            )),
+        };
+        Ok(Engine {
+            backend,
+            label: format!("{} · {voice}", pack.name),
+        })
+    }
+
     pub fn sample_rate(&self) -> u32 {
-        self.tts.sample_rate().max(1) as u32
+        match &self.backend {
+            Backend::Sherpa { tts, .. } => tts.sample_rate().max(1) as u32,
+            Backend::Turbo(_) => crate::vieneu::turbo::SAMPLE_RATE,
+            Backend::Nano(_) => crate::vieneu::nano::SAMPLE_RATE,
+        }
     }
 }
 
@@ -176,17 +220,23 @@ impl Synthesizer for Engine {
         if text.is_empty() {
             return Ok(Audio::silence(self.sample_rate(), 0));
         }
-        let audio = self
-            .tts
-            .generate_with_config(&text, &self.generation, None::<fn(&[f32], f32) -> bool>)
+        let (tts, generation) = match &mut self.backend {
+            Backend::Sherpa { tts, generation } => (tts, generation),
+            Backend::Turbo(t) => {
+                let samples = t.synthesize(&text)?;
+                return Ok(Audio::from_f32(crate::vieneu::turbo::SAMPLE_RATE, &samples));
+            }
+            Backend::Nano(n) => {
+                let samples = n.synthesize(&text)?;
+                return Ok(Audio::from_f32(crate::vieneu::nano::SAMPLE_RATE, &samples));
+            }
+        };
+        let audio = tts
+            .generate_with_config(&text, generation, None::<fn(&[f32], f32) -> bool>)
             .context("speech synthesis failed")?;
-        Ok(Audio {
-            sample_rate: audio.sample_rate().max(1) as u32,
-            samples: audio
-                .samples()
-                .iter()
-                .map(|&x| (x.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
-                .collect(),
-        })
+        Ok(Audio::from_f32(
+            audio.sample_rate().max(1) as u32,
+            audio.samples(),
+        ))
     }
 }

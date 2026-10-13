@@ -302,7 +302,8 @@ function speakerOptions(model, lang) {
   if (model.kind === "supertonic") {
     return opts.map(([i, n]) => [i, `${n[0] === "F" ? "Female" : "Male"} ${n.slice(1)}`]);
   }
-  return opts.map(([i, n]) => [i, /^\d+$/.test(n) ? `Speaker ${n}` : n]);
+  const notes = model.speaker_notes || [];
+  return opts.map(([i, n]) => [i, /^\d+$/.test(n) ? `Speaker ${n}` : notes[i] ? `${n} — ${notes[i]}` : n]);
 }
 
 function setVoice(model, speaker) {

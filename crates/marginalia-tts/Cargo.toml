@@ -1,6 +1,6 @@
 [package]
 name = "marginalia-tts"
-description = "Text-to-speech for Marginalia: Piper, Kokoro and Supertonic voices run in-process with sherpa-onnx, downloaded on demand"
+description = "Text-to-speech for Marginalia: Piper, Kokoro, Supertonic and VieNeu voices run in-process with ONNX Runtime, downloaded on demand"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -24,6 +24,13 @@ rodio = { version = "0.21", optional = true, default-features = false, features 
 # ONNX Runtime + espeak-ng, statically linked (prebuilt libraries are
 # downloaded by its build script).
 sherpa-onnx = "1.13.8"
+# VieNeu-TTS voices: the ONNX Runtime linked above, driven directly. The
+# `alternative-backend` feature stops ort from linking a second copy.
+ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "alternative-backend"] }
+# Vietnamese text normalization and phonemes for VieNeu (Rust core, no Python).
+sea-g2p-rs = { git = "https://github.com/pnnbao97/sea-g2p", rev = "e825173f235d08ea19315b2b279fb11153b44cea", default-features = false }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 tar = "0.4"
 tempfile = "3"
 ureq = { version = "3", features = ["platform-verifier"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

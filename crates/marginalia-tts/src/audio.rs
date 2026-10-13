@@ -19,6 +19,17 @@ impl Audio {
         }
     }
 
+    /// From float samples in [-1, 1].
+    pub fn from_f32(sample_rate: u32, samples: &[f32]) -> Audio {
+        Audio {
+            sample_rate,
+            samples: samples
+                .iter()
+                .map(|&x| (x.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+                .collect(),
+        }
+    }
+
     pub fn duration_secs(&self) -> f32 {
         self.samples.len() as f32 / self.sample_rate.max(1) as f32
     }
