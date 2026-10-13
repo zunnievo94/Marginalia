@@ -227,11 +227,14 @@ pure CLI better than a cross-platform reading app with audio.
 
 Marginalia's source code is MIT licensed (see [LICENSE](LICENSE)).
 
-The app links [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
-(Apache-2.0), [ONNX Runtime](https://github.com/microsoft/onnxruntime) (MIT)
-and [eSpeak NG](https://github.com/espeak-ng/espeak-ng) (**GPL-3.0**)
-statically. Because of eSpeak NG, the **released binaries as a whole are
-distributed under the GPL-3.0**; the full source is in this repository.
+The released programs also contain two GPL-3.0 components, [eSpeak
+NG](https://github.com/espeak-ng/espeak-ng) (linked into the app through
+sherpa-onnx) and the [`epub`](https://github.com/danigm/epub-rs) crate, so
+**the released binaries as a whole are distributed under the
+[GPL-3.0](LICENSE-GPL-3.0.txt)**; the full source of every release is in
+this repository. The other components (sherpa-onnx, ONNX Runtime, Tauri and
+the remaining Rust crates) use permissive licenses compatible with that.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the list.
 
 Voice models are downloaded separately and keep their own licenses: Piper
 voices list theirs in the bundled `MODEL_CARD`, Kokoro is Apache-2.0, and
