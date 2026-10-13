@@ -20,6 +20,7 @@ use super::{floats, npz, run, session, tensor, Phonemizer, Rng};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 pub(crate) const REPO: &str = "pnnbao-ump/VieNeu-TTS-v3-Turbo";
+pub(crate) const REVISION: &str = "61b85e3d937fbbacb387714180e8182823512523";
 /// The fp32 graphs (VieNeu's CPU default; the int8 ones garble audio on
 /// CPUs without VNNI).
 pub(crate) const SUBFOLDER: &str = "onnx_update";
@@ -33,6 +34,7 @@ pub(crate) const FILES: &[&str] = &[
     "tokenizer.json",
 ];
 pub(crate) const CODEC_REPO: &str = "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX";
+pub(crate) const CODEC_REVISION: &str = "ceff0d0749bfb3fa2d61149794ec6feef0d1e1ae";
 pub(crate) const CODEC_FILES: &[&str] = &[
     "moss_audio_tokenizer_decode_full.onnx",
     "moss_audio_tokenizer_decode_shared.data",
@@ -775,6 +777,22 @@ fn babble_suspect(wav: &[f32], phonemes: &str, cap: usize, frames: usize) -> Bab
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Prints the token ids of each line of `$VIENEU_TEST_PHONES` with the
+    /// tokenizer at `$VIENEU_TEST_TOKENIZER`, for comparing with Python's
+    /// `tokenizers`.
+    #[test]
+    #[ignore]
+    fn tokenize_lines() {
+        let tok = tokenizers::Tokenizer::from_file(std::env::var("VIENEU_TEST_TOKENIZER").unwrap())
+            .unwrap();
+        let phones = std::fs::read_to_string(std::env::var("VIENEU_TEST_PHONES").unwrap()).unwrap();
+        for line in phones.lines() {
+            let ids = tok.encode(line, false).unwrap();
+            let ids: Vec<String> = ids.get_ids().iter().map(u32::to_string).collect();
+            println!("IDS\t{}", ids.join(" "));
+        }
+    }
 
     #[test]
     fn counts_syllables_like_vieneu() {

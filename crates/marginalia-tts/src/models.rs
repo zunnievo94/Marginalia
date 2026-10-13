@@ -155,21 +155,26 @@ impl Pack {
     /// archive.
     pub fn files(&self) -> Vec<(String, String)> {
         use crate::vieneu::{nano, turbo, HF, SEA_G2P_DICT, SEA_G2P_DICT_URL, VIENEU_RAW};
-        let hf = |repo: &str, path: &str| format!("{HF}/{repo}/resolve/main/{path}");
+        // Pinned to the commits the port was checked against.
+        let hf = |repo: &str, rev: &str, path: &str| format!("{HF}/{repo}/resolve/{rev}/{path}");
         let name = |f: &str| f.rsplit('/').next().unwrap_or(f).to_string();
         let mut files: Vec<(String, String)> = match self.kind {
             Kind::VieneuTurbo => turbo::FILES
                 .iter()
                 .map(|f| {
                     (
-                        hf(turbo::REPO, &format!("{}/{f}", turbo::SUBFOLDER)),
+                        hf(
+                            turbo::REPO,
+                            turbo::REVISION,
+                            &format!("{}/{f}", turbo::SUBFOLDER),
+                        ),
                         name(f),
                     )
                 })
                 .chain(
                     turbo::CODEC_FILES
                         .iter()
-                        .map(|f| (hf(turbo::CODEC_REPO, f), name(f))),
+                        .map(|f| (hf(turbo::CODEC_REPO, turbo::CODEC_REVISION, f), name(f))),
                 )
                 .chain([(
                     format!("{VIENEU_RAW}/src/vieneu/assets/{}", turbo::VOICES),
@@ -178,7 +183,7 @@ impl Pack {
                 .collect(),
             Kind::VieneuNano => nano::FILES
                 .iter()
-                .map(|f| (hf(nano::REPO, f), name(f)))
+                .map(|f| (hf(nano::REPO, nano::REVISION, f), name(f)))
                 .chain([(
                     format!("{VIENEU_RAW}/src/vieneu/assets/{}", nano::VOICES),
                     nano::VOICES.into(),
@@ -402,7 +407,7 @@ mod tests {
         );
         let files = turbo.files();
         assert!(files.iter().any(|(u, n)| n == "vieneu_prefill.onnx"
-            && u == "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo/resolve/main/onnx_update/vieneu_prefill.onnx"));
+            && u == "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo/resolve/61b85e3d937fbbacb387714180e8182823512523/onnx_update/vieneu_prefill.onnx"));
         assert!(files.iter().any(|(_, n)| n == "sea_g2p.bin"));
         assert!(files.iter().any(|(_, n)| n == "voices_v3_turbo.json"));
         let nano = find("vieneu-tts-v3-nano").unwrap();

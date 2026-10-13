@@ -18,6 +18,7 @@ use super::{floats, npz, run, session, tensor, Phonemizer, Rng};
 pub(crate) const SAMPLE_RATE: u32 = 24_000;
 /// Graphs and data from the Hugging Face repository.
 pub(crate) const REPO: &str = "pnnbao-ump/VieNeu-TTS-v3-Nano";
+pub(crate) const REVISION: &str = "aba295eb96a6fa6003ebe417cc1f2802a7adc1dc";
 pub(crate) const FILES: &[&str] = &[
     "text_encoder.onnx",
     "duration_predictor.onnx",
