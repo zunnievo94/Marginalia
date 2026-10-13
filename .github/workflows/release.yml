@@ -102,6 +102,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.args }}
+          cache-directories: target/sherpa-onnx-prebuilt
+      # sherpa-onnx-sys downloads its libraries into target/sherpa-onnx-prebuilt.
+      # A partly restored cache can hold its build-script output without
+      # them; then rebuild it so the libraries are downloaded again.
+      - name: Check the cached sherpa-onnx libraries
+        shell: bash
+        run: |
+          if ! ls -d target/sherpa-onnx-prebuilt/*/lib >/dev/null 2>&1; then
+            rm -rf target/*/build/sherpa-onnx-sys-* target/*/.fingerprint/sherpa-onnx-sys-* \
+              target/*/*/build/sherpa-onnx-sys-* target/*/*/.fingerprint/sherpa-onnx-sys-*
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -156,6 +167,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          cache-directories: target/sherpa-onnx-prebuilt
+      # sherpa-onnx-sys downloads its libraries into target/sherpa-onnx-prebuilt.
+      # A partly restored cache can hold its build-script output without
+      # them; then rebuild it so the libraries are downloaded again.
+      - name: Check the cached sherpa-onnx libraries
+        shell: bash
+        run: |
+          if ! ls -d target/sherpa-onnx-prebuilt/*/lib >/dev/null 2>&1; then
+            rm -rf target/*/build/sherpa-onnx-sys-* target/*/.fingerprint/sherpa-onnx-sys-* \
+              target/*/*/build/sherpa-onnx-sys-* target/*/*/.fingerprint/sherpa-onnx-sys-*
+          fi
       - run: cargo build --release --locked -p marginalia-cli --target ${{ matrix.target }}
       - name: Package
         shell: bash
