@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/zreader-core", "crates/zreader-tts", "crates/zreader-cli", "crates/zreader-app"]
+members = ["crates/marginalia-core", "crates/marginalia-tts", "crates/marginalia-cli", "crates/marginalia-app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,8 +10,8 @@ repository = "https://github.com/zunnievo94/ZReader"
 rust-version = "1.82"
 
 [workspace.dependencies]
-zreader-core = { path = "crates/zreader-core" }
-zreader-tts = { path = "crates/zreader-tts", default-features = false }
+marginalia-core = { path = "crates/marginalia-core" }
+marginalia-tts = { path = "crates/marginalia-tts", default-features = false }
 thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
