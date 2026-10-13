@@ -1,6 +1,10 @@
+<p align="center"><img src="docs/logo.svg" width="128" alt="Marginalia logo"></p>
+
 # Marginalia
 
-*Marginalia* are the notes readers write in the margins of a book.
+*Marginalia* are the notes readers write in the margins of a book. The logo
+is a page whose margin note is a sound wave: a book you can annotate and
+listen to.
 
 An open-source desktop ebook reader for **EPUB** and **MOBI / PRC / AZW**
 files that can **read your books aloud** with open-source neural
@@ -30,6 +34,7 @@ Early stage. What works today:
 | Images | ✅ inline pictures (EPUB `<img>`/SVG, MOBI `recindex`) and covers |
 | Languages | ✅ Vietnamese and Chinese (Simplified/Traditional) fonts; GBK/Big5/UTF-16 books; Piper voices for vi, zh and ~40 more |
 | Playback | ✅ gapless playback while the next sentence is synthesized, or export to WAV |
+| Notes | ✅ on passages or paragraphs, colors, notes panel, Markdown export |
 | Desktop app | ✅ Windows, macOS, Linux (Tauri). No mobile version is planned. |
 | CLI | ✅ `marginalia` command for scripting and terminals |
 
@@ -44,6 +49,11 @@ status bar with the read-aloud controls.
   width; reopens where you stopped.
 - **Read aloud**: press <kbd>Space</kbd> or double-click a sentence; the
   sentence being spoken is highlighted and followed, across chapters.
+- **Notes**: select any passage (even across paragraphs) and press
+  **✎ Note**, or click the **+** in the margin to annotate a whole
+  paragraph. Notes are highlighted in one of four colors, marked in the
+  margin, listed in a panel on the right (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>)
+  and can be exported to Markdown.
 - **Voices**: install the Piper engine and download voices with progress
   bars; choose a default voice or let it match the book's language.
 
@@ -162,7 +172,8 @@ pure CLI better than a cross-platform reading app with audio.
 
 - [x] Desktop app (Tauri 2) with library, reader, sentence highlighting
 - [x] Remember reading position and resume reading aloud
-- [ ] Search inside a book; bookmarks and notes
+- [x] Notes on passages and paragraphs, Markdown export
+- [ ] Search inside a book; bookmarks
 - [ ] Run Piper in-process (ONNX Runtime via `sherpa-rs`/`ort`) instead of a
       child process; also add Kokoro voices
 - [ ] Full KF8 (AZW3) structure: chapter splitting from the NCX index

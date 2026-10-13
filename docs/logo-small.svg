@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Marginalia (small sizes)</title>
+  <rect x="32" y="32" width="960" height="960" rx="200" fill="#1E2740"/>
+  <g transform="rotate(-6 512 512)">
+    <rect x="200" y="120" width="624" height="784" rx="40" fill="#F5EEDC"/>
+    <rect x="408" y="400" width="350" height="96" rx="18" fill="#F2B84B"/>
+    <g stroke="#7E879A" stroke-width="60" stroke-linecap="round">
+      <line x1="440" y1="270" x2="740" y2="270"/>
+      <line x1="440" y1="448" x2="726" y2="448" stroke="#3E4350"/>
+      <line x1="440" y1="626" x2="740" y2="626"/>
+      <line x1="440" y1="782" x2="620" y2="782"/>
+    </g>
+    <line x1="350" y1="120" x2="350" y2="904" stroke="#D2553D" stroke-width="34"/>
+    <path d="M272 230 C 330 300, 330 360, 272 430 C 214 500, 214 560, 272 630 C 316 684, 316 730, 272 780"
+          fill="none" stroke="#D2553D" stroke-width="56" stroke-linecap="round"/>
+  </g>
+</svg>

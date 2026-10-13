@@ -34,6 +34,10 @@ const state = {
   voiceLang: null,
   downloads: {}, // key -> { done, total }
   chapterFilter: "",
+  notes: [], // notes of the open book
+  notesFilter: "",
+  editing: null, // note open in the editor
+  pendingAnchor: null, // anchor of the current text selection
 };
 
 // ------------------------------------------------------------- helpers
@@ -106,6 +110,8 @@ function applySettings() {
   const s = state.settings;
   document.documentElement.dataset.theme = s.theme;
   $("#sidebar").style.width = s.sidebar_width + "px";
+  $("#notes-panel").style.width = s.notes_width + "px";
+  document.body.classList.toggle("notes-open", !!s.notes_open);
   $("#st-speed").textContent = s.speed.toFixed(2).replace(/0$/, "") + "×";
   const r = document.querySelector(".reading");
   if (r) styleReading(r);
@@ -460,6 +466,9 @@ async function openBook(id) {
   stopSpeech();
   const view = await call("book_open", { id });
   state.book = view;
+  state.notes = await invoke("notes_list", { id }).catch(() => []);
+  state.notesFilter = "";
+  closeNoteEditor();
   state.cursor = null;
   state.speaking = null;
   state.chapterFilter = "";
@@ -470,6 +479,7 @@ async function openBook(id) {
   });
   state.view = "chapters";
   renderSidebar();
+  renderNotesPanel();
   refreshLibrary();
 }
 
@@ -485,8 +495,11 @@ function closeBook() {
   state.chapter = -1;
   state.blocks = [];
   state.paragraphs = [];
+  state.notes = [];
+  closeNoteEditor();
   renderContent();
   renderSidebar();
+  renderNotesPanel();
   renderStatus();
 }
 
@@ -553,6 +566,7 @@ function renderContent() {
     const p = document.createElement("p");
     p.dataset.p = pi;
     if (pi === 0 && norm(sentences.join(" ")) === norm(title)) p.className = "heading";
+    p.append(el(`<span class="gutter add" title="Add a note to this paragraph"></span>`));
     sentences.forEach((s, si) => {
       // Chinese/Japanese sentences are not separated by spaces.
       if (si && !CJK_END.test(sentences[si - 1])) p.append(" ");
@@ -579,13 +593,14 @@ function renderContent() {
   }
   reading.append(nav);
   content.replaceChildren(reading);
+  applyNoteMarks();
   if (state.speaking?.chapter === state.chapter) highlight(state.speaking, false);
 }
 
 function renderWelcome() {
   const w = el(`<div class="welcome">
-    <h1>Marginalia</h1>
-    <div class="sub">Read EPUB, MOBI and PRC books — or listen to them.</div>
+    <div class="brand"><img src="logo.svg" alt=""><h1>Marginalia</h1></div>
+    <div class="sub">Read, annotate and listen to EPUB, MOBI and PRC books.</div>
     <div class="cols">
       <div>
         <h2>Start</h2>
@@ -627,6 +642,7 @@ function renderStatus() {
   $("#st-book").textContent = b ? b.entry.title : "";
   $("#st-chapter").textContent = b ? `Chapter ${state.chapter + 1}/${b.toc.length}` : "";
   $("#st-progress").textContent = b ? Math.round(progressOf(b.entry.position) * 100) + "%" : "";
+  $("#st-notes").textContent = b ? `✎ ${state.notes.length} note${state.notes.length === 1 ? "" : "s"}` : "";
   const play = $("#st-play");
   play.textContent = { loading: "… Preparing", playing: "❚❚ Pause", paused: "▶ Resume", stopped: "▶ Read aloud" }[state.tts];
   play.classList.toggle("playing", state.tts === "playing");
@@ -756,6 +772,8 @@ function wire() {
   $("#st-book").onclick = () => setViewIfHidden("library");
   $("#content").addEventListener("scroll", onScroll, { passive: true });
 
+  wireNotes();
+
   // Click a sentence to place the read-aloud cursor; double-click to start there.
   const content = $("#content");
   const sentenceAt = (target) => {
@@ -764,6 +782,9 @@ function wire() {
     return { chapter: state.chapter, paragraph: Number(s.parentElement.dataset.p), sentence: Number(s.dataset.s) };
   };
   content.addEventListener("click", (e) => {
+    if (e.target.closest(".gutter")) return;
+    const clickedNote = noteAtPoint(e.clientX, e.clientY);
+    if (clickedNote && !window.getSelection().toString()) openNoteEditor(clickedNote);
     const pos = sentenceAt(e.target);
     if (!pos || window.getSelection().toString()) return;
     document.querySelectorAll(".s.cursor").forEach((n) => n.classList.remove("cursor"));
@@ -802,6 +823,8 @@ function wire() {
   document.addEventListener("keydown", (e) => {
     const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
     const mod = e.ctrlKey || e.metaKey;
+    if (e.key === "Escape" && !$("#note-editor").hidden) { e.preventDefault(); closeNoteEditor(); return; }
+    if (mod && e.shiftKey && e.key.toLowerCase() === "m") { e.preventDefault(); toggleNotesPanel(); return; }
     if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); document.body.classList.toggle("sidebar-hidden"); renderSidebar(); }
     else if (mod && e.key.toLowerCase() === "o") { e.preventDefault(); pickBooks(); }
     else if (mod && e.key === "1") { e.preventDefault(); setViewIfHidden("chapters"); }
@@ -854,7 +877,379 @@ async function main() {
     state.view = "library";
   }
   renderSidebar();
+  renderNotesPanel();
   renderStatus();
+}
+
+
+// ---------------------------------------------------------------- notes
+
+const HAS_HIGHLIGHTS = typeof CSS !== "undefined" && "highlights" in CSS && typeof Highlight !== "undefined";
+const NOTE_COLORS = ["amber", "green", "blue", "rose"];
+
+function paragraphEl(i) {
+  return document.querySelector(`.reading p[data-p="${i}"]`);
+}
+
+// Character offset of (node, offset) inside paragraph `p`'s text.
+function textOffset(p, node, offset) {
+  const r = document.createRange();
+  r.setStart(p, 0);
+  r.setEnd(node, offset);
+  return r.toString().length;
+}
+
+// DOM position of character `offset` inside paragraph `p`.
+function domPoint(p, offset) {
+  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+  let left = offset;
+  let last = null;
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (left <= n.length) return [n, left];
+    left -= n.length;
+    last = n;
+  }
+  return last ? [last, last.length] : [p, 0];
+}
+
+// A DOM Range for a note in the current chapter, or null.
+function noteRange(note) {
+  const a = note.anchor;
+  if (a.chapter !== state.chapter || a.start == null) return null;
+  const p1 = paragraphEl(a.paragraph);
+  const p2 = paragraphEl(a.end_paragraph ?? a.paragraph);
+  if (!p1 || !p2) return null;
+  let start = a.start;
+  let end = a.end;
+  // If the text moved, find the quote again within the paragraph.
+  if (p1 === p2 && p1.textContent.slice(start, end) !== a.quote) {
+    const at = p1.textContent.indexOf(a.quote);
+    if (at < 0) return null;
+    start = at;
+    end = at + a.quote.length;
+  }
+  const r = document.createRange();
+  r.setStart(...domPoint(p1, start));
+  r.setEnd(...domPoint(p2, end));
+  return r;
+}
+
+function applyNoteMarks() {
+  if (HAS_HIGHLIGHTS) for (const c of NOTE_COLORS) CSS.highlights.delete("note-" + c);
+  document.querySelectorAll(".reading .gutter.mark").forEach((n) => n.remove());
+  document.querySelectorAll(".reading p.noted").forEach((p) => {
+    p.classList.remove("noted", "whole");
+    p.removeAttribute("data-color");
+  });
+  if (!state.book) return;
+  const ranges = Object.fromEntries(NOTE_COLORS.map((c) => [c, []]));
+  const byParagraph = new Map();
+  for (const note of state.notes) {
+    if (note.anchor.chapter !== state.chapter) continue;
+    const list = byParagraph.get(note.anchor.paragraph) || [];
+    list.push(note);
+    byParagraph.set(note.anchor.paragraph, list);
+    const r = noteRange(note);
+    if (r) (ranges[note.color] || ranges.amber).push(r);
+  }
+  if (HAS_HIGHLIGHTS) {
+    for (const c of NOTE_COLORS) {
+      if (ranges[c].length) CSS.highlights.set("note-" + c, new Highlight(...ranges[c]));
+    }
+  }
+  for (const [pi, notes] of byParagraph) {
+    const p = paragraphEl(pi);
+    if (!p) continue;
+    p.classList.add("noted");
+    if (notes.some((n) => n.anchor.start == null)) p.classList.add("whole");
+    p.dataset.color = notes[0].color;
+    const mark = el(`<span class="gutter mark" data-color="${esc(notes[0].color)}" data-count="${notes.length}"
+      title="${notes.length} note${notes.length > 1 ? "s" : ""}"></span>`);
+    mark.onclick = (e) => {
+      e.stopPropagation();
+      if (notes.length === 1) openNoteEditor(notes[0], mark);
+      else {
+        setNotesOpen(true);
+        renderNotesPanel(notes.map((n) => n.id));
+      }
+    };
+    p.prepend(mark);
+  }
+}
+
+// The note whose highlighted passage is under the pointer, if any.
+function noteAtPoint(x, y) {
+  let node;
+  let offset;
+  if (document.caretPositionFromPoint) {
+    const c = document.caretPositionFromPoint(x, y);
+    if (!c) return null;
+    [node, offset] = [c.offsetNode, c.offset];
+  } else if (document.caretRangeFromPoint) {
+    const c = document.caretRangeFromPoint(x, y);
+    if (!c) return null;
+    [node, offset] = [c.startContainer, c.startOffset];
+  } else return null;
+  for (const note of state.notes) {
+    const r = noteRange(note);
+    try {
+      if (r && r.isPointInRange(node, offset) && !(r.endContainer === node && r.endOffset === offset)) return note;
+    } catch { /* node outside the document */ }
+  }
+  return null;
+}
+
+// Anchor for the current selection inside the reading view, or null.
+function selectionAnchor() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || sel.isCollapsed) return null;
+  const r = sel.getRangeAt(0);
+  const p1 = (r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement)?.closest(".reading p[data-p]");
+  const p2 = (r.endContainer.nodeType === 1 ? r.endContainer : r.endContainer.parentElement)?.closest(".reading p[data-p]");
+  if (!p1 || !p2) return null;
+  const quote = r.toString();
+  if (!quote.trim()) return null;
+  const start = textOffset(p1, r.startContainer, r.startOffset);
+  const end = textOffset(p2, r.endContainer, r.endOffset);
+  const paragraph = Number(p1.dataset.p);
+  const endParagraph = Number(p2.dataset.p);
+  return {
+    chapter: state.chapter,
+    paragraph,
+    start,
+    end_paragraph: endParagraph !== paragraph ? endParagraph : null,
+    end,
+    quote,
+  };
+}
+
+function paragraphAnchor(p) {
+  const text = p.textContent.trim();
+  return {
+    chapter: state.chapter,
+    paragraph: Number(p.dataset.p),
+    start: null,
+    end_paragraph: null,
+    end: null,
+    quote: text.length > 280 ? text.slice(0, 280) + "…" : text,
+  };
+}
+
+function openNoteEditor(note, near) {
+  state.editing = note;
+  $("#sel-note").hidden = true;
+  const ed = $("#note-editor");
+  const quote = note.anchor.quote.trim();
+  ed.querySelector(".quote").textContent = quote || "(paragraph)";
+  ed.querySelector("textarea").value = note.text || "";
+  ed.querySelector('[data-act="delete"]').hidden = !note.id;
+  setEditorColor(note.color || "amber");
+  ed.hidden = false;
+  // Place it next to what it annotates, kept inside the window.
+  let rect = near?.getBoundingClientRect?.() || noteRange(note)?.getBoundingClientRect()
+    || paragraphEl(note.anchor.paragraph)?.getBoundingClientRect();
+  if (!rect || (!rect.width && !rect.height)) {
+    const c = $("#content").getBoundingClientRect();
+    rect = { left: c.left + c.width / 2 - 180, bottom: c.top + 80, top: c.top + 80 };
+  }
+  const w = ed.offsetWidth;
+  const h = ed.offsetHeight;
+  const left = Math.max(12, Math.min(window.innerWidth - w - 12, rect.left));
+  let top = rect.bottom + 8;
+  if (top + h > window.innerHeight - 30) top = Math.max(12, rect.top - h - 8);
+  ed.style.left = left + "px";
+  ed.style.top = top + "px";
+  ed.querySelector("textarea").focus();
+}
+
+function setEditorColor(color) {
+  const ed = $("#note-editor");
+  ed.dataset.color = color;
+  ed.querySelector(".quote").dataset.color = color;
+  ed.querySelectorAll(".colors button").forEach((b) => b.classList.toggle("on", b.dataset.color === color));
+}
+
+function closeNoteEditor() {
+  state.editing = null;
+  const ed = $("#note-editor");
+  if (ed) ed.hidden = true;
+}
+
+async function saveEditingNote() {
+  const ed = $("#note-editor");
+  const note = {
+    ...state.editing,
+    text: ed.querySelector("textarea").value,
+    color: ed.dataset.color || "amber",
+  };
+  if (!note.text.trim() && !note.anchor.quote.trim()) return closeNoteEditor();
+  const saved = await call("note_save", { id: state.book.entry.id, note });
+  state.notes = state.notes.filter((n) => n.id !== saved.id).concat(saved).sort(noteOrder);
+  closeNoteEditor();
+  window.getSelection().removeAllRanges();
+  applyNoteMarks();
+  renderNotesPanel([saved.id]);
+  renderStatus();
+}
+
+async function deleteNote(note) {
+  await call("note_delete", { id: state.book.entry.id, noteId: note.id });
+  state.notes = state.notes.filter((n) => n.id !== note.id);
+  if (state.editing?.id === note.id) closeNoteEditor();
+  applyNoteMarks();
+  renderNotesPanel();
+  renderStatus();
+}
+
+function noteOrder(a, b) {
+  const x = a.anchor;
+  const y = b.anchor;
+  return x.chapter - y.chapter || x.paragraph - y.paragraph || (x.start ?? 0) - (y.start ?? 0) || a.created - b.created;
+}
+
+function setNotesOpen(open) {
+  updateSetting("notes_open", open);
+  if (open) renderNotesPanel();
+}
+
+function toggleNotesPanel() {
+  setNotesOpen(!state.settings.notes_open);
+}
+
+function renderNotesPanel(activeIds = []) {
+  const list = $("#notes-list");
+  if (!list) return;
+  $("#notes-count").textContent = state.notes.length;
+  $("#notes-export").disabled = !state.notes.length;
+  list.replaceChildren();
+  if (!state.book) {
+    list.append(el(`<div class="hint">Open a book to see its notes.</div>`));
+    return;
+  }
+  const q = state.notesFilter.trim().toLowerCase();
+  const notes = state.notes.filter((n) => !q || (n.text + " " + n.anchor.quote).toLowerCase().includes(q));
+  if (!state.notes.length) {
+    list.append(el(`<div class="hint">No notes yet.<br><br>Select some text and press <b>✎ Note</b>,
+      or click the <b>+</b> in the margin next to a paragraph.</div>`));
+    return;
+  }
+  if (!notes.length) list.append(el(`<div class="hint">No notes match.</div>`));
+  let chapter = -1;
+  let firstActive = null;
+  for (const note of notes) {
+    if (note.anchor.chapter !== chapter) {
+      chapter = note.anchor.chapter;
+      list.append(el(`<div class="note-group">${esc(state.book.toc[chapter]?.title || `Chapter ${chapter + 1}`)}</div>`));
+    }
+    const quote = note.anchor.quote.trim();
+    const card = el(`<div class="note-card${activeIds.includes(note.id) ? " active" : ""}" data-color="${esc(note.color)}">
+      ${quote ? `<div class="q">${esc(quote)}</div>` : ""}
+      ${note.text.trim() ? `<div class="t">${esc(note.text.trim())}</div>` : ""}
+      <div class="when">${new Date(note.updated * 1000).toLocaleString()}</div>
+      <div class="actions"><button class="icon-btn" title="Edit">✎</button><button class="icon-btn" title="Delete">×</button></div>
+    </div>`);
+    card.onclick = () => goToNote(note);
+    const [edit, del] = card.querySelectorAll(".actions button");
+    edit.onclick = async (e) => {
+      e.stopPropagation();
+      await goToNote(note);
+      openNoteEditor(note);
+    };
+    del.onclick = (e) => {
+      e.stopPropagation();
+      deleteNote(note);
+    };
+    if (activeIds.includes(note.id) && !firstActive) firstActive = card;
+    list.append(card);
+  }
+  firstActive?.scrollIntoView({ block: "nearest" });
+}
+
+async function goToNote(note) {
+  const a = note.anchor;
+  await loadChapter(a.chapter, { scroll: "none" });
+  const p = paragraphEl(a.paragraph);
+  if (!p) return;
+  const content = $("#content");
+  const box = content.getBoundingClientRect();
+  const r = p.getBoundingClientRect();
+  if (r.top < box.top + 20 || r.top > box.bottom - 80) content.scrollTop += r.top - box.top - box.height / 3;
+  const range = noteRange(note);
+  if (range && HAS_HIGHLIGHTS) {
+    CSS.highlights.set("note-flash", new Highlight(range));
+    setTimeout(() => CSS.highlights.delete("note-flash"), 1200);
+  } else {
+    p.classList.remove("flash");
+    void p.offsetWidth;
+    p.classList.add("flash");
+  }
+}
+
+function wireNotes() {
+  const content = $("#content");
+  const selBtn = $("#sel-note");
+  const showSelectionButton = () => {
+    const anchor = state.book ? selectionAnchor() : null;
+    state.pendingAnchor = anchor;
+    if (!anchor) {
+      selBtn.hidden = true;
+      return;
+    }
+    const rects = window.getSelection().getRangeAt(0).getClientRects();
+    const last = rects[rects.length - 1];
+    if (!last) return;
+    selBtn.hidden = false;
+    selBtn.style.left = Math.min(window.innerWidth - 90, last.right + 4) + "px";
+    selBtn.style.top = Math.min(window.innerHeight - 60, last.bottom + 6) + "px";
+  };
+  content.addEventListener("mouseup", () => setTimeout(showSelectionButton, 0));
+  content.addEventListener("keyup", (e) => e.shiftKey && showSelectionButton());
+  content.addEventListener("scroll", () => { selBtn.hidden = true; }, { passive: true });
+  document.addEventListener("selectionchange", () => {
+    if (window.getSelection().isCollapsed) selBtn.hidden = true;
+  });
+  selBtn.addEventListener("mousedown", (e) => e.preventDefault()); // keep the selection
+  selBtn.onclick = () => {
+    if (!state.pendingAnchor) return;
+    openNoteEditor({ id: "", anchor: state.pendingAnchor, text: "", color: "amber" });
+  };
+
+  // "+" in the margin: note on the whole paragraph.
+  content.addEventListener("click", (e) => {
+    const add = e.target.closest(".gutter.add");
+    if (!add) return;
+    e.stopPropagation();
+    const p = add.closest("p[data-p]");
+    openNoteEditor({ id: "", anchor: paragraphAnchor(p), text: "", color: "amber" }, p);
+  });
+
+  const ed = $("#note-editor");
+  ed.querySelector('[data-act="save"]').onclick = saveEditingNote;
+  ed.querySelector('[data-act="cancel"]').onclick = closeNoteEditor;
+  ed.querySelector('[data-act="delete"]').onclick = () => state.editing && deleteNote(state.editing);
+  ed.querySelectorAll(".colors button").forEach((b) => { b.onclick = () => setEditorColor(b.dataset.color); });
+  ed.querySelector("textarea").addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      saveEditingNote();
+    }
+  });
+  document.addEventListener("mousedown", (e) => {
+    if (!ed.hidden && !ed.contains(e.target) && !e.target.closest(".gutter, #sel-note, .note-card")) closeNoteEditor();
+  });
+
+  $("#btn-notes").onclick = toggleNotesPanel;
+  $("#st-notes").onclick = toggleNotesPanel;
+  $("#notes-close").onclick = () => setNotesOpen(false);
+  $("#notes-filter").oninput = (e) => {
+    state.notesFilter = e.target.value;
+    renderNotesPanel();
+  };
+  $("#notes-export").onclick = async () => {
+    if (!state.book) return;
+    const path = await call("notes_export", { id: state.book.entry.id });
+    if (path) toast("Notes exported to " + path);
+  };
 }
 
 main();

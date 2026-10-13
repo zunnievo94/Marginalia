@@ -126,6 +126,9 @@ pub struct Settings {
     /// Piper voice key; `None` picks one for the book's language.
     pub voice: Option<String>,
     pub speed: f32,
+    /// Whether the notes panel on the right is open.
+    pub notes_open: bool,
+    pub notes_width: u32,
 }
 
 impl Default for Settings {
@@ -139,6 +142,8 @@ impl Default for Settings {
             sidebar_width: 280,
             voice: None,
             speed: 1.0,
+            notes_open: false,
+            notes_width: 300,
         }
     }
 }

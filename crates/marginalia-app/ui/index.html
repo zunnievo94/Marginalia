@@ -37,9 +37,22 @@
         <span class="grow"></span>
         <button class="icon-btn" id="btn-prev" title="Previous chapter (←)">‹</button>
         <button class="icon-btn" id="btn-next" title="Next chapter (→)">›</button>
+        <button class="icon-btn" id="btn-notes" title="Toggle notes panel (Ctrl+Shift+M)">
+          <svg viewBox="0 0 24 24"><path d="M4 3h12l4 4v14H4zm2 2v14h12V8h-3V5zm2 5h8v2H8zm0 4h8v2H8z"/></svg>
+        </button>
       </div>
       <div id="content" tabindex="0"></div>
     </main>
+
+    <aside id="notes-panel" aria-label="Notes">
+      <header class="panel-title">
+        <span>Notes</span><span class="badge" id="notes-count">0</span><span class="grow"></span>
+        <button class="icon-btn" id="notes-export" title="Export notes as Markdown">⤓</button>
+        <button class="icon-btn" id="notes-close" title="Close">×</button>
+      </header>
+      <div class="filter"><input type="search" id="notes-filter" placeholder="Filter notes"></div>
+      <div id="notes-list"></div>
+    </aside>
   </div>
 
   <footer id="statusbar">
@@ -47,6 +60,7 @@
       <span class="item" id="st-book"></span>
       <span class="item" id="st-chapter"></span>
       <span class="item" id="st-progress"></span>
+      <button class="item" id="st-notes" title="Notes (Ctrl+Shift+M)"></button>
     </div>
     <div class="right">
       <span class="item" id="st-voice" title="Voice"></span>
@@ -55,6 +69,21 @@
       <button class="item" id="st-play" title="Read aloud (Space)">▶ Read aloud</button>
     </div>
   </footer>
+
+  <button id="sel-note" hidden>✎ Note</button>
+  <div id="note-editor" hidden>
+    <div class="quote"></div>
+    <textarea placeholder="Write a note…  (Ctrl+Enter to save, Esc to cancel)"></textarea>
+    <div class="row">
+      <span class="colors">
+        <button data-color="amber" title="Amber"></button><button data-color="green" title="Green"></button><button data-color="blue" title="Blue"></button><button data-color="rose" title="Rose"></button>
+      </span>
+      <span class="grow"></span>
+      <button class="btn small secondary" data-act="delete">Delete</button>
+      <button class="btn small secondary" data-act="cancel">Cancel</button>
+      <button class="btn small" data-act="save">Save</button>
+    </div>
+  </div>
 
   <div id="toasts"></div>
   <script src="app.js"></script>

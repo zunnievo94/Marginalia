@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod notes;
 mod speech;
 mod store;
 
@@ -258,6 +259,59 @@ fn position_save(
     Ok(())
 }
 
+// ------------------------------------------------------------------ notes
+
+#[tauri::command]
+fn notes_list(id: String) -> Vec<notes::Note> {
+    notes::load(&id)
+}
+
+#[tauri::command]
+fn note_save(id: String, note: notes::Note) -> CmdResult<notes::Note> {
+    notes::save(&id, note).map_err(err)
+}
+
+#[tauri::command]
+fn note_delete(id: String, note_id: String) -> CmdResult<()> {
+    notes::delete(&id, &note_id).map_err(err)
+}
+
+/// Save the book's notes as a Markdown file chosen by the user.
+#[tauri::command]
+async fn notes_export(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CmdResult<Option<String>> {
+    let book = state.book(&id)?;
+    let titles: Vec<String> = book.chapters.iter().map(|c| c.title.clone()).collect();
+    let title = state
+        .library
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(|e| e.title.clone())
+        .unwrap_or_else(|| book.metadata.title.clone());
+    let md = notes::to_markdown(&title, &book.metadata.authors, &titles, &notes::load(&id));
+    let file_name: String = format!("{title} - notes.md")
+        .chars()
+        .map(|c| if "/\\:*?\"<>|".contains(c) { '_' } else { c })
+        .collect();
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("Export notes")
+        .set_file_name(&file_name)
+        .add_filter("Markdown", &["md"])
+        .blocking_save_file()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    std::fs::write(&path, md).map_err(err)?;
+    Ok(Some(path.display().to_string()))
+}
+
 // --------------------------------------------------------------- settings
 
 #[tauri::command]
@@ -459,6 +513,10 @@ fn main() {
             book_open,
             chapter_get,
             position_save,
+            notes_list,
+            note_save,
+            note_delete,
+            notes_export,
             settings_get,
             settings_set,
             tts_play,
