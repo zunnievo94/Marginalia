@@ -81,7 +81,7 @@ macOS ship suitable fonts.
 You need a [Rust toolchain](https://rustup.rs) (1.82+).
 
 ```sh
-git clone https://github.com/zunnievo94/ZReader
+git clone https://github.com/zunnievo94/Marginalia
 cd Marginalia
 cargo install --path crates/marginalia-cli
 ```
