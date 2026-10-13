@@ -48,7 +48,7 @@ Early stage. What works today:
 | KF8 / AZW3 | ✅ chapters rebuilt from the skeleton/fragment indexes and titled from the NCX; `kindle:embed` images; hybrid MOBI+KF8 files |
 | Plain PalmDOC (`.pdb`, old `.prc`) | ✅ plain-text and HTML content |
 | DRM-protected books | ❌ refused with a clear error (DRM-free books only) |
-| Text-to-speech | ✅ runs inside the app with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): 89 Piper voices (~40 languages), Kokoro (natural English and Mandarin), Supertonic 3 (31 languages); models downloaded on demand |
+| Text-to-speech | ✅ runs inside the app with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): 89 Piper voices (~40 languages), Kokoro (natural English and Mandarin), Supertonic 3 (31 languages), [VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) v3 Turbo and Nano (natural Vietnamese, no Python needed); models downloaded on demand |
 | TTS fallback | ✅ a system `espeak-ng` when no voice model is installed |
 | Images | ✅ inline pictures (EPUB `<img>`/SVG, MOBI `recindex`) and covers |
 | Languages | ✅ Vietnamese and Chinese (Simplified/Traditional) fonts; GBK/Big5/UTF-16 books; voices for vi, zh and ~40 more |
@@ -130,6 +130,7 @@ marginalia speak book.epub                 # read aloud from chapter 1
 marginalia speak book.epub -c 5 --speed 1.2
 marginalia speak book.epub -c 5 --chapters 1 --out chapter5.wav
 marginalia say "Xin chào" --lang vi
+marginalia say "Xin chào" --voice vieneu-tts-v3-turbo --speaker "Ngọc Huyền"
 marginalia say "Hello there" --voice kokoro-multi-lang-v1_0 --speaker bf_emma
 ```
 
@@ -156,6 +157,11 @@ neural voices, falling back to eSpeak NG).
 | Piper (`vits-piper-*`) | one each, ~40 languages | 30–130 MB | small and fast; default for **Vietnamese** (`vi_VN-vais1000-medium`) |
 | Kokoro v1.0 | English (US/UK), Mandarin | 350 MB | most natural English/Chinese; needs a reasonably fast CPU |
 | Supertonic 3 | 31 languages incl. Vietnamese, Korean, Japanese | 129 MB | 44.1 kHz, 10 speakers; in Vietnamese it sometimes repeats or skips words |
+| VieNeu-TTS v3 Turbo | Vietnamese (with English words) | 583 MB | the most natural Vietnamese; 48 kHz, 25 voices; needs a fast CPU (about real time on 4 cores) |
+| VieNeu-TTS v3 Nano | Vietnamese | 347 MB | natural Vietnamese for slower CPUs; 24 kHz, 11 voices |
+
+Speed changes nothing for VieNeu Turbo: it is an autoregressive model with
+no speed control.
 
 Downloads are stored in the platform data directory
 (`~/.local/share/marginalia` on Linux, `~/Library/Application
@@ -172,9 +178,11 @@ crates/
                     here. HTML becomes paragraphs and images; text is split
                     into sentences for speech; accent-insensitive search.
   marginalia-tts    Voice model catalog + downloader (sherpa-onnx GitHub
-                    releases), in-process synthesis with sherpa-onnx (ONNX
-                    Runtime + espeak-ng, statically linked), eSpeak NG
-                    fallback, WAV writer, audio player (rodio).
+                    releases, Hugging Face), in-process synthesis with
+                    sherpa-onnx (ONNX Runtime + espeak-ng, statically
+                    linked), VieNeu voices through the vieneu-tts crate on the
+                    same ONNX Runtime, eSpeak NG fallback, WAV writer, audio
+                    player (rodio).
   marginalia-cli    The `marginalia` command.
   marginalia-app    Desktop app: Tauri backend (src/) + plain HTML/CSS/JS UI (ui/),
                  no Node or bundler needed.
@@ -188,6 +196,21 @@ Voice quality was checked by transcribing generated Vietnamese audio with a
 Vietnamese speech-recognition model (sherpa-onnx `zipformer-vi`): Piper
 `vais1000` came back word-perfect, Supertonic sometimes repeated or dropped
 words, which is why Piper is the Vietnamese default.
+
+VieNeu voices come from [vieneu-tts-rs](https://github.com/zunnievo94/vieneu-tts-rs),
+a separate crate so other Rust programs can use them too. The models and
+their design are the work of Phạm Nguyễn Ngọc Bảo and VieNeu-TTS; the
+crate only re-implements inference. They run without Python: text goes through
+[sea-g2p](https://github.com/pnnbao97/sea-g2p) (a Rust crate), the graphs
+through the ONNX Runtime that sherpa-onnx already links, and the glue
+VieNeu writes in NumPy (embeddings, sampling, the stop and "babble" checks)
+is ported to Rust. The port was checked against the Python package: same
+phonemes and tokens, identical audio codes for Turbo with sampling turned
+off, and the same Nano waveform for the same starting noise (111 dB SNR).
+On 8 sentences × 3 takes the speech recognizer found 1.9% word errors for
+Turbo and 4.7% for Nano (Python: 3.9% and 2.3%; Piper `vais1000`: 3.9%).
+These differences are sampling noise. Piper stays the default download
+because it is a tenth of the size and runs on any CPU.
 
 ## Why Rust (and not Go)
 
@@ -217,8 +240,7 @@ pure CLI better than a cross-platform reading app with audio.
 - [x] Search inside a book; bookmarks
 - [x] Voices in-process with sherpa-onnx; Kokoro and Supertonic voices
 - [x] Full KF8 (AZW3) structure: chapter splitting from the NCX index
-- [ ] A more natural Vietnamese voice (e.g. VieNeu-TTS, if it can run
-      without Python)
+- [x] A more natural Vietnamese voice: VieNeu-TTS v3, without Python
 - [x] Images and covers
 - [ ] Basic book styling (bold/italic, tables)
 - [ ] FB2, TXT and (maybe) PDF text
@@ -238,9 +260,12 @@ details.
 The released programs include third-party components, among them [eSpeak
 NG](https://github.com/espeak-ng/espeak-ng) (GPL-3.0-or-later, linked
 through sherpa-onnx), the [`epub`](https://github.com/danigm/epub-rs) crate
-(GPL-3.0), sherpa-onnx (Apache-2.0) and ONNX Runtime (MIT); all are
+(GPL-3.0), sherpa-onnx (Apache-2.0), ONNX Runtime (MIT), and code ported
+from [VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) and
+[sea-g2p](https://github.com/pnnbao97/sea-g2p) (Apache-2.0); all are
 compatible with the GPL-3.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Voice models are downloaded separately and keep their own licenses: Piper
 voices list theirs in the bundled `MODEL_CARD`, Kokoro is Apache-2.0, and
-Supertonic 3 is MIT (code) with OpenRAIL-M weights.
+Supertonic 3 is MIT (code) with OpenRAIL-M weights, and VieNeu-TTS (models,
+codec and sea-g2p dictionary) is Apache-2.0.

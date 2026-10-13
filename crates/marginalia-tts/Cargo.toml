@@ -1,6 +1,6 @@
 [package]
 name = "marginalia-tts"
-description = "Text-to-speech for Marginalia: Piper, Kokoro and Supertonic voices run in-process with sherpa-onnx, downloaded on demand"
+description = "Text-to-speech for Marginalia: Piper, Kokoro, Supertonic and VieNeu voices run in-process with ONNX Runtime, downloaded on demand"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -24,6 +24,8 @@ rodio = { version = "0.21", optional = true, default-features = false, features 
 # ONNX Runtime + espeak-ng, statically linked (prebuilt libraries are
 # downloaded by its build script).
 sherpa-onnx = "1.13.8"
+# VieNeu-TTS voices, sharing the ONNX Runtime linked above.
+vieneu-tts = { git = "https://github.com/zunnievo94/vieneu-tts-rs", rev = "ee76ffd33baf999158ca4410c12062a15a12789e", default-features = false, features = ["shared-ort"] }
 tar = "0.4"
 tempfile = "3"
 ureq = { version = "3", features = ["platform-verifier"] }

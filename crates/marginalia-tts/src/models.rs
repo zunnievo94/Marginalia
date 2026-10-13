@@ -1,10 +1,11 @@
 //! Catalog of open voice models and their installation.
 //!
-//! Models are the sherpa-onnx packaged releases on GitHub
+//! Most models are the sherpa-onnx packaged releases on GitHub
 //! (<https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models>): each
 //! is a `.tar.bz2` archive holding the ONNX files plus whatever the model
-//! needs (tokens, espeak-ng data, lexicons). They are extracted to
-//! `<data dir>/models/<id>/`.
+//! needs (tokens, espeak-ng data, lexicons). VieNeu voices are separate
+//! files on Hugging Face and GitHub (see [`Pack::files`]). Either way they
+//! end up in `<data dir>/models/<id>/`.
 
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -21,7 +22,7 @@ const RELEASE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/downlo
 const COMPLETE_MARKER: &str = ".marginalia-complete";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum Kind {
     /// Piper (VITS) voices: one language each, small and fast.
     Piper,
@@ -29,6 +30,17 @@ pub enum Kind {
     Kokoro,
     /// Supertonic 3: 31 languages including Vietnamese.
     Supertonic,
+    /// VieNeu-TTS v3 Turbo: the most natural Vietnamese voices.
+    VieneuTurbo,
+    /// VieNeu-TTS v3 Nano: VieNeu for slower CPUs.
+    VieneuNano,
+}
+
+impl Kind {
+    /// VieNeu models, which run outside sherpa-onnx.
+    pub fn is_vieneu(self) -> bool {
+        matches!(self, Kind::VieneuTurbo | Kind::VieneuNano)
+    }
 }
 
 /// A downloadable voice model.
@@ -44,6 +56,9 @@ pub struct Pack {
     pub size: u64,
     /// Speaker names for multi-speaker models (empty for single-speaker).
     pub speakers: Vec<String>,
+    /// A short description of each speaker (VieNeu: gender, region, style).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub speaker_notes: Vec<String>,
     pub license: String,
     #[serde(default)]
     pub note: String,
@@ -125,12 +140,32 @@ impl Pack {
             (Kind::Kokoro, "en_GB") => &["bf_emma"],
             (Kind::Kokoro, l) if l.starts_with("zh") => &["zf_xiaoxiao"],
             (Kind::Kokoro, _) => &["af_heart"],
+            // VieNeu's own defaults.
+            (Kind::VieneuTurbo, _) => &["Hải Đăng"],
+            (Kind::VieneuNano, _) => &["Minh Quân"],
             _ => &[],
         };
         prefer
             .iter()
             .find_map(|name| self.speakers.iter().position(|s| s == name))
             .unwrap_or(0) as i32
+    }
+
+    /// `(url, file name)` of each file of a model that is not a sherpa-onnx
+    /// archive.
+    pub fn files(&self) -> Vec<(String, String)> {
+        match self.vieneu_model() {
+            Some(m) => m.files(),
+            None => Vec::new(),
+        }
+    }
+
+    pub(crate) fn vieneu_model(&self) -> Option<vieneu_tts::Model> {
+        match self.kind {
+            Kind::VieneuTurbo => Some(vieneu_tts::Model::Turbo),
+            Kind::VieneuNano => Some(vieneu_tts::Model::Nano),
+            _ => None,
+        }
     }
 
     /// Download and extract the model. Safe to call again after a failure.
@@ -141,6 +176,9 @@ impl Pack {
         let root = paths::models_dir()?;
         fs::create_dir_all(&root)?;
         let work = tempfile::tempdir_in(&root)?;
+        if self.kind.is_vieneu() {
+            return self.download_files(work.path(), progress);
+        }
         let archive = work.path().join("model.tar.bz2");
         download::download_file(&self.url(), &archive, progress)?;
 
@@ -162,6 +200,31 @@ impl Pack {
             fs::remove_dir_all(&dest)?;
         }
         fs::rename(&top, &dest)?;
+        Ok(())
+    }
+
+    /// Download a model made of separate files into `work`, then move it
+    /// into place. Progress counts bytes over the whole model.
+    fn download_files(&self, work: &std::path::Path, progress: Progress<'_>) -> Result<()> {
+        let staging = work.join(&self.id);
+        fs::create_dir_all(&staging)?;
+        let mut before = 0u64;
+        for (url, name) in self.files() {
+            let mut last = 0u64;
+            download::download_file(&url, &staging.join(&name), &mut |done, _| {
+                last = done;
+                let total = self.size.max(before + done);
+                progress(before + done, Some(total));
+            })
+            .with_context(|| format!("downloading {name} for {}", self.id))?;
+            before += last;
+        }
+        fs::write(staging.join(COMPLETE_MARKER), b"")?;
+        let dest = self.dir()?;
+        if dest.exists() {
+            fs::remove_dir_all(&dest)?;
+        }
+        fs::rename(&staging, &dest)?;
         Ok(())
     }
 
@@ -202,15 +265,19 @@ pub fn installed() -> Vec<&'static Pack> {
     catalog().iter().filter(|p| p.is_installed()).collect()
 }
 
-/// Kind preference for a language. Vietnamese prefers Piper: in our tests
-/// Supertonic's Vietnamese sometimes repeated or dropped words.
+/// Kind preference for a language. For Vietnamese, VieNeu sounds the most
+/// natural; among the rest Piper beats Supertonic, whose Vietnamese
+/// sometimes repeated or dropped words in our tests.
 fn kind_rank(kind: Kind, lang: &str) -> u8 {
     match (family(&normalize_lang(lang)), kind) {
-        ("vi", Kind::Piper) => 0,
-        ("vi", Kind::Supertonic) => 1,
+        ("vi", Kind::VieneuTurbo) => 0,
+        ("vi", Kind::VieneuNano) => 1,
+        ("vi", Kind::Piper) => 2,
+        ("vi", Kind::Supertonic) => 3,
         (_, Kind::Kokoro) => 0,
         (_, Kind::Piper) => 1,
         (_, Kind::Supertonic) => 2,
+        (_, Kind::VieneuTurbo | Kind::VieneuNano) => 3,
     }
 }
 
@@ -252,7 +319,9 @@ pub fn best_installed(lang: &str) -> Option<&'static Pack> {
         .next()
 }
 
-/// The model to suggest downloading for a language.
+/// The model to suggest downloading for a language. For Vietnamese that is
+/// still the small Piper voice: VieNeu is a much bigger download and needs
+/// a faster CPU, so it is offered in the voice list rather than by default.
 pub fn recommended(lang: &str) -> Option<&'static Pack> {
     if family(&normalize_lang(lang)) == "vi" {
         if let Some(p) = find("vits-piper-vi_VN-vais1000-medium") {
@@ -293,10 +362,37 @@ mod tests {
         assert_eq!(recommended("de").unwrap().kind, Kind::Piper);
         assert!(recommended("xx").is_none());
         let vi = for_language("vi");
-        assert_eq!(vi[0].id, "vits-piper-vi_VN-vais1000-medium");
+        assert_eq!(vi[0].kind, Kind::VieneuTurbo);
+        assert_eq!(vi[1].kind, Kind::VieneuNano);
+        assert_eq!(vi[2].id, "vits-piper-vi_VN-vais1000-medium");
         assert_eq!(vi.last().unwrap().kind, Kind::Supertonic);
         assert!(vi.iter().any(|p| p.kind == Kind::Supertonic));
         assert!(vi.iter().all(|p| p.kind != Kind::Kokoro));
+        assert!(for_language("en").iter().all(|p| !p.kind.is_vieneu()));
+    }
+
+    #[test]
+    fn vieneu_packs() {
+        let turbo = find("vieneu-tts-v3-turbo").unwrap();
+        assert_eq!(
+            turbo.speakers[turbo.default_speaker("vi") as usize],
+            "Hải Đăng"
+        );
+        let files = turbo.files();
+        assert!(files.iter().any(|(u, n)| n == "vieneu_prefill.onnx"
+            && u == "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo/resolve/61b85e3d937fbbacb387714180e8182823512523/onnx_update/vieneu_prefill.onnx"));
+        assert!(files.iter().any(|(_, n)| n == "sea_g2p.bin"));
+        assert!(files.iter().any(|(_, n)| n == "voices_v3_turbo.json"));
+        let nano = find("vieneu-tts-v3-nano").unwrap();
+        assert_eq!(
+            nano.speakers[nano.default_speaker("vi") as usize],
+            "Minh Quân"
+        );
+        assert_eq!(nano.files().len(), 8);
+        assert!(find("vits-piper-vi_VN-vais1000-medium")
+            .unwrap()
+            .files()
+            .is_empty());
     }
 
     #[test]
