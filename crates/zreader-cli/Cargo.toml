@@ -19,4 +19,4 @@ playback = ["zreader-tts/playback"]
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 zreader-core.workspace = true
-zreader-tts = { workspace = true, default-features = false }
+zreader-tts.workspace = true

@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use epub::doc::{EpubDoc, NavPoint};
 
-use crate::{html, Book, Chapter, Error, Format, Metadata, Result};
+use crate::book::sniff_image;
+use crate::{html, Book, Chapter, Error, Format, Image, Metadata, Result};
+
+type Doc = EpubDoc<Cursor<Vec<u8>>>;
 
 pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
     let mut doc = EpubDoc::from_reader(Cursor::new(bytes.to_vec()))
@@ -22,7 +25,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
             .map(|m| m.value.trim().to_string())
             .filter(|a| !a.is_empty())
             .collect(),
-        language: doc.mdata("language").map(|m| m.value.clone()),
+        language: doc.mdata("language").map(|m| m.value.trim().to_string()),
     };
 
     let spine: Vec<String> = doc
@@ -32,37 +35,116 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
         .map(|s| s.idref.clone())
         .collect();
 
+    let mut images = Images::default();
     let mut chapters = Vec::new();
     for idref in spine {
         let Some(path) = doc.resources.get(&idref).map(|r| r.path.clone()) else {
             continue;
         };
-        let Some((content, mime)) = doc.get_resource_str(&idref) else {
+        let Some((bytes, mime)) = doc.get_resource(&idref) else {
             continue;
         };
         if !mime.contains("html") && !mime.contains("xml") {
             continue;
         }
-        let converted = html::convert(&content);
-        if converted.text.trim().is_empty() {
-            continue; // cover pages, image-only pages
-        }
-        let title = titles
+        let converted = html::convert(&html::decode_markup(&bytes));
+        let fallback_title = titles
             .get(&normalize(&path))
             .cloned()
-            .or(converted.heading)
+            .or_else(|| converted.heading.clone())
             .unwrap_or_else(|| format!("Section {}", chapters.len() + 1));
-        chapters.push(Chapter {
-            title,
-            text: converted.text,
+        let base = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let chapter = Chapter::from_html(fallback_title, converted, |src| {
+            images.add(&mut doc, &resolve(&base, src)?)
         });
+        // Skip blank pages; keep picture-only pages (covers, illustrations).
+        if chapter.text.trim().is_empty() && !chapter.has_images() {
+            continue;
+        }
+        chapters.push(chapter);
     }
+
+    let cover = doc
+        .get_cover_id()
+        .and_then(|id| doc.resources.get(&id).map(|r| r.path.clone()))
+        .and_then(|path| images.add(&mut doc, &path))
+        .or_else(|| (!images.list.is_empty()).then_some(0));
 
     Ok(Book {
         format: Format::Epub,
         metadata,
         chapters,
+        images: images.list,
+        cover,
     })
+}
+
+/// Images loaded from the archive, each stored once.
+#[derive(Default)]
+struct Images {
+    list: Vec<Image>,
+    by_path: HashMap<PathBuf, Option<usize>>,
+}
+
+impl Images {
+    fn add(&mut self, doc: &mut Doc, path: &Path) -> Option<usize> {
+        if let Some(found) = self.by_path.get(path) {
+            return *found;
+        }
+        let index = doc.get_resource_by_path(path).and_then(|data| {
+            let media_type = doc
+                .get_resource_mime_by_path(path)
+                .filter(|m| m.starts_with("image/"))
+                .or_else(|| sniff_image(&data).map(str::to_string))?;
+            self.list.push(Image { media_type, data });
+            Some(self.list.len() - 1)
+        });
+        self.by_path.insert(path.to_path_buf(), index);
+        index
+    }
+}
+
+/// Resolve an `src` relative to the chapter's directory inside the archive.
+fn resolve(base: &Path, src: &str) -> Option<PathBuf> {
+    if src.contains("://") || src.starts_with("data:") {
+        return None; // remote or inline images are not supported
+    }
+    let src = percent_decode(src.split(['#', '?']).next()?);
+    let joined = if let Some(abs) = src.strip_prefix('/') {
+        PathBuf::from(abs)
+    } else {
+        base.join(&src)
+    };
+    let mut out = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(p) => out.push(p),
+            _ => {}
+        }
+    }
+    Some(out)
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Map each content file to the first table-of-contents label pointing at it.
@@ -81,4 +163,27 @@ fn collect_toc_titles(points: &[NavPoint], out: &mut HashMap<PathBuf, String>) {
 fn normalize(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
     PathBuf::from(s.split('#').next().unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_relative_paths() {
+        let base = Path::new("OEBPS/Text");
+        assert_eq!(
+            resolve(base, "../Images/a%20b.png#x"),
+            Some(PathBuf::from("OEBPS/Images/a b.png"))
+        );
+        assert_eq!(
+            resolve(base, "c.jpg"),
+            Some(PathBuf::from("OEBPS/Text/c.jpg"))
+        );
+        assert_eq!(
+            resolve(base, "/img/d.gif"),
+            Some(PathBuf::from("img/d.gif"))
+        );
+        assert_eq!(resolve(base, "https://x/y.png"), None);
+    }
 }

@@ -1,8 +1,11 @@
 # ZReader
 
-An open-source ebook reader for **EPUB** and **MOBI / PRC / AZW** files that
-can **read your books aloud** with open-source neural text-to-speech. Voice
-models are downloaded on demand, so nothing big ships with the app.
+An open-source desktop ebook reader for **EPUB** and **MOBI / PRC / AZW**
+files that can **read your books aloud** with open-source neural
+text-to-speech. Voice models are downloaded on demand, so nothing big ships
+with the app.
+
+![ZReader reading a book aloud](docs/screenshot.png)
 
 > **About this project.** ZReader is built for its owner's own needs: a
 > reader that opens the formats they use and can read to them. It is not
@@ -22,10 +25,46 @@ Early stage. What works today:
 | DRM-protected books | ❌ refused with a clear error (DRM-free books only) |
 | TTS: Piper neural voices | ✅ catalog of 100+ voices in ~40 languages, downloaded on demand with MD5 checks |
 | TTS: eSpeak NG fallback | ✅ uses a system `espeak-ng` when Piper is unavailable |
+| Images | ✅ inline pictures (EPUB `<img>`/SVG, MOBI `recindex`) and covers |
+| Languages | ✅ Vietnamese and Chinese (Simplified/Traditional) fonts; GBK/Big5/UTF-16 books; Piper voices for vi, zh and ~40 more |
 | Playback | ✅ gapless playback while the next sentence is synthesized, or export to WAV |
-| GUI | 🚧 planned (see [Roadmap](#roadmap)); today's interface is the `zreader` CLI |
+| Desktop app | ✅ Windows, macOS, Linux (Tauri). No mobile version is planned. |
+| CLI | ✅ `zreader` command for scripting and terminals |
 
-## Install
+## Desktop app
+
+A VS Code-style window: chapters on the left, the book on the right, and a
+status bar with the read-aloud controls.
+
+- **Library**: open books (or drop files onto the window); covers and
+  reading progress are remembered.
+- **Reader**: dark / light / sepia themes, font, size, spacing and column
+  width; reopens where you stopped.
+- **Read aloud**: press <kbd>Space</kbd> or double-click a sentence; the
+  sentence being spoken is highlighted and followed, across chapters.
+- **Voices**: install the Piper engine and download voices with progress
+  bars; choose a default voice or let it match the book's language.
+
+Shortcuts: <kbd>Space</kbd> play/pause, <kbd>←</kbd>/<kbd>→</kbd> chapters,
+<kbd>Ctrl</kbd>+<kbd>B</kbd> sidebar, <kbd>Ctrl</kbd>+<kbd>O</kbd> open,
+<kbd>Ctrl</kbd>+<kbd>+</kbd>/<kbd>-</kbd> font size, <kbd>Esc</kbd> stop.
+
+### Build it
+
+You need a [Rust toolchain](https://rustup.rs) (1.82+) and the
+[Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS
+(on Linux: `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libasound2-dev`).
+
+```sh
+cargo run --release -p zreader-app           # run it
+cargo install tauri-cli --version "^2"
+cd crates/zreader-app && cargo tauri build   # installer (.msi/.dmg/.deb/.AppImage)
+```
+
+For Chinese books on Linux, install CJK fonts (`fonts-noto-cjk`); Windows and
+macOS ship suitable fonts.
+
+## Command line
 
 You need a [Rust toolchain](https://rustup.rs) (1.82+).
 
@@ -89,6 +128,8 @@ crates/
                  pinned to v1.0.0, MD5-verified), Piper runtime installer and
                  driver, eSpeak NG driver, WAV writer, audio player (rodio).
   zreader-cli    The `zreader` command.
+  zreader-app    Desktop app: Tauri backend (src/) + plain HTML/CSS/JS UI (ui/),
+                 no Node or bundler needed.
 ```
 
 Speech is produced one sentence at a time on a worker thread. Piper is kept
@@ -117,14 +158,14 @@ pure CLI better than a cross-platform reading app with audio.
 
 ## Roadmap
 
-- [ ] GUI app with Tauri 2 (desktop first, then Android/iOS) on top of
-      `zreader-core` and `zreader-tts`: library view, paged reader,
-      highlight-the-sentence-being-read
-- [ ] Remember reading position and resume reading aloud
+- [x] Desktop app (Tauri 2) with library, reader, sentence highlighting
+- [x] Remember reading position and resume reading aloud
+- [ ] Search inside a book; bookmarks and notes
 - [ ] Run Piper in-process (ONNX Runtime via `sherpa-rs`/`ort`) instead of a
       child process; also add Kokoro voices
 - [ ] Full KF8 (AZW3) structure: chapter splitting from the NCX index
-- [ ] Images and basic styling in the reader view
+- [x] Images and covers
+- [ ] Basic book styling (bold/italic, tables)
 - [ ] FB2, TXT and (maybe) PDF text
 
 ## Licenses

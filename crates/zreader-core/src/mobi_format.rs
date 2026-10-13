@@ -4,8 +4,11 @@
 //! describing how the text records are compressed. We read uncompressed and
 //! PalmDOC (LZ77) and HUFF/CDIC compression are all supported.
 
+use std::collections::HashMap;
+
+use crate::book::sniff_image;
 use crate::huff::HuffReader;
-use crate::{html, Book, Chapter, Error, Format, Metadata, Result};
+use crate::{html, Book, Chapter, Error, Format, Image, Metadata, Result};
 
 const COMPRESSION_NONE: u16 = 1;
 const COMPRESSION_PALMDOC: u16 = 2;
@@ -103,7 +106,10 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
         }
     }
     raw.truncate(text_length);
-    let utf8 = header.as_ref().is_some_and(|h| h.encoding == 65001);
+    // Some converters write UTF-8 text but label it CP1252 (or PalmDOC,
+    // which has no encoding field); valid UTF-8 is never an accident.
+    let utf8 =
+        header.as_ref().is_some_and(|h| h.encoding == 65001) || std::str::from_utf8(&raw).is_ok();
     let text = decode(&raw, utf8);
 
     if looks_binary(&text) {
@@ -115,14 +121,38 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
         title: db.name(),
         ..Metadata::default()
     };
-    if let Some(h) = &header {
-        h.apply(rec0, &mut metadata);
-    }
+    let cover_offset = header.as_ref().and_then(|h| h.apply(rec0, &mut metadata));
+    let first_image = header.as_ref().map_or(0, |h| h.first_image);
+
+    // Image records are numbered from the header's first-image record.
+    let mut images = Vec::new();
+    let mut by_record: HashMap<usize, Option<usize>> = HashMap::new();
+    let mut load_image = |record: usize| -> Option<usize> {
+        *by_record.entry(record).or_insert_with(|| {
+            let data = db.record(record)?;
+            let media_type = sniff_image(data)?;
+            images.push(Image {
+                media_type: media_type.to_string(),
+                data: data.to_vec(),
+            });
+            Some(images.len() - 1)
+        })
+    };
+
     let chapters = if header.is_some() || looks_like_html(&text) {
-        html_chapters(&text)
+        html_chapters(&text, |src| {
+            let n: usize = src.strip_prefix("recindex:")?.parse().ok()?;
+            if first_image == 0 || n == 0 {
+                return None;
+            }
+            load_image(first_image + n - 1)
+        })
     } else {
         plain_text_chapters(&text)
     };
+    let cover = cover_offset
+        .filter(|_| first_image > 0)
+        .and_then(|off| load_image(first_image + off));
 
     Ok(Book {
         format: if is_mobi {
@@ -132,6 +162,8 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
         },
         metadata,
         chapters,
+        images,
+        cover,
     })
 }
 
@@ -141,6 +173,7 @@ struct MobiHeader {
     extra_flags: u16,
     first_huff: usize,
     huff_count: usize,
+    first_image: usize,
 }
 
 impl MobiHeader {
@@ -158,10 +191,16 @@ impl MobiHeader {
             extra_flags,
             first_huff: u32_at(rec0, 0x70).unwrap_or(0) as usize,
             huff_count: u32_at(rec0, 0x74).unwrap_or(0) as usize,
+            first_image: match u32_at(rec0, 0x6C) {
+                Some(n) if n != u32::MAX => n as usize,
+                _ => 0,
+            },
         }
     }
 
-    fn apply(&self, rec0: &[u8], meta: &mut Metadata) {
+    /// Fill in metadata from the header and EXTH; returns the cover's
+    /// offset from the first image record, if the book declares one.
+    fn apply(&self, rec0: &[u8], meta: &mut Metadata) -> Option<usize> {
         let utf8 = self.encoding == 65001;
         // Full name.
         if let (Some(off), Some(len)) = (u32_at(rec0, 84), u32_at(rec0, 88)) {
@@ -176,8 +215,9 @@ impl MobiHeader {
         let has_exth = u32_at(rec0, 128).unwrap_or(0) & 0x40 != 0;
         let exth = 16 + self.header_len;
         if !has_exth || rec0.get(exth..exth + 4) != Some(b"EXTH") {
-            return;
+            return None;
         }
+        let mut cover = None;
         let count = u32_at(rec0, exth + 8).unwrap_or(0);
         let mut pos = exth + 12;
         for _ in 0..count {
@@ -191,15 +231,21 @@ impl MobiHeader {
             let Some(data) = rec0.get(pos + 8..pos + len) else {
                 break;
             };
-            let value = decode(data, utf8).trim().to_string();
+            let value = decode(data, utf8 || std::str::from_utf8(data).is_ok())
+                .trim()
+                .to_string();
             match kind {
                 100 if !value.is_empty() => meta.authors.push(value),
                 503 if !value.is_empty() => meta.title = value,
                 524 if !value.is_empty() => meta.language = Some(value),
+                201 if data.len() == 4 => {
+                    cover = u32_at(data, 0).map(|v| v as usize);
+                }
                 _ => {}
             }
             pos += len;
         }
+        cover
     }
 }
 
@@ -295,7 +341,7 @@ pub(crate) fn palmdoc_decompress(input: &[u8], out: &mut Vec<u8>) {
 }
 
 /// MOBI text is HTML; chapters are separated by `<mbp:pagebreak/>`.
-fn html_chapters(markup: &str) -> Vec<Chapter> {
+fn html_chapters(markup: &str, mut resolve: impl FnMut(&str) -> Option<usize>) -> Vec<Chapter> {
     let lower = markup.to_ascii_lowercase();
     let mut cuts = vec![0];
     cuts.extend(lower.match_indices("<mbp:pagebreak").map(|(i, _)| i));
@@ -304,15 +350,15 @@ fn html_chapters(markup: &str) -> Vec<Chapter> {
     let mut chapters = Vec::new();
     for w in cuts.windows(2) {
         let converted = html::convert(&markup[w[0]..w[1]]);
-        if converted.text.trim().is_empty() {
+        let title = converted
+            .heading
+            .clone()
+            .unwrap_or_else(|| format!("Section {}", chapters.len() + 1));
+        let chapter = Chapter::from_html(title, converted, &mut resolve);
+        if chapter.text.trim().is_empty() && !chapter.has_images() {
             continue;
         }
-        chapters.push(Chapter {
-            title: converted
-                .heading
-                .unwrap_or_else(|| format!("Section {}", chapters.len() + 1)),
-            text: converted.text,
-        });
+        chapters.push(chapter);
     }
     chapters
 }
@@ -345,20 +391,21 @@ fn plain_text_chapters(text: &str) -> Vec<Chapter> {
             if let Some(c) = current.take() {
                 chapters.push(c);
             }
-            current = Some(Chapter {
-                title: if is_heading {
+            current = Some(Chapter::from_text(
+                if is_heading {
                     p.clone()
                 } else {
                     format!("Section {}", chapters.len() + 1)
                 },
-                text: String::new(),
-            });
+                String::new(),
+            ));
         }
         let c = current.as_mut().expect("set above");
         if !c.text.is_empty() {
             c.text.push_str("\n\n");
         }
         c.text.push_str(&p);
+        c.blocks.push(crate::Block::Text(p));
     }
     chapters.extend(current);
     chapters

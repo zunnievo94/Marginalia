@@ -93,10 +93,14 @@ impl WavWriter {
 }
 
 /// Plays audio chunks through the default output device, gapless.
+///
+/// The output stream is tied to the thread that created it on some
+/// platforms, so keep the `Player` on one thread and hand a
+/// [`PlayerHandle`] to others for pause/resume/stop.
 #[cfg(feature = "playback")]
 pub struct Player {
     // Field order matters: the sink must drop before the stream.
-    sink: rodio::Sink,
+    sink: std::sync::Arc<rodio::Sink>,
     _stream: rodio::OutputStream,
 }
 
@@ -106,7 +110,7 @@ impl Player {
         let mut stream = rodio::OutputStreamBuilder::open_default_stream()
             .context("opening the default audio output device")?;
         stream.log_on_drop(false);
-        let sink = rodio::Sink::connect_new(stream.mixer());
+        let sink = std::sync::Arc::new(rodio::Sink::connect_new(stream.mixer()));
         Ok(Player {
             sink,
             _stream: stream,
@@ -127,13 +131,49 @@ impl Player {
         ));
     }
 
-    /// Number of queued chunks not yet finished.
+    /// Queue a callback that runs when playback reaches this point, e.g. to
+    /// highlight the sentence that is about to be heard.
+    pub fn enqueue_marker(&self, callback: impl Fn() + Send + 'static) {
+        self.sink
+            .append(rodio::source::EmptyCallback::new(Box::new(callback)));
+    }
+
+    /// Number of queued items (audio chunks and markers) not yet finished.
     pub fn queued(&self) -> usize {
         self.sink.len()
     }
 
     pub fn wait_until_done(&self) {
         self.sink.sleep_until_end();
+    }
+
+    pub fn handle(&self) -> PlayerHandle {
+        PlayerHandle(self.sink.clone())
+    }
+}
+
+/// Thread-safe remote control for a [`Player`].
+#[cfg(feature = "playback")]
+#[derive(Clone)]
+pub struct PlayerHandle(std::sync::Arc<rodio::Sink>);
+
+#[cfg(feature = "playback")]
+impl PlayerHandle {
+    pub fn pause(&self) {
+        self.0.pause();
+    }
+
+    pub fn resume(&self) {
+        self.0.play();
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.0.is_paused()
+    }
+
+    /// Stop playback and drop everything queued.
+    pub fn stop(&self) {
+        self.0.stop();
     }
 }
 

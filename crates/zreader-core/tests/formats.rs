@@ -2,7 +2,19 @@
 
 use std::io::Write;
 
-use zreader_core::{open_bytes, Error, Format};
+use zreader_core::{open_bytes, Block, Error, Format};
+
+/// A 1x1 PNG.
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
+const JPEG: &[u8] = &[
+    0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F', 0, 0xFF, 0xD9,
+];
 
 fn build_epub() -> Vec<u8> {
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -27,13 +39,17 @@ fn build_epub() -> Vec<u8> {
     <dc:creator>Jane Doe</dc:creator>
     <dc:language>en</dc:language>
     <dc:identifier id="id">urn:uuid:1234</dc:identifier>
+    <meta name="cover" content="cover-img"/>
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
     <item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
     <item id="c2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="cv" href="text/cover.xhtml" media-type="application/xhtml+xml"/>
+    <item id="cover-img" href="images/cover.jpg" media-type="image/jpeg"/>
+    <item id="pic" href="images/pic.png" media-type="image/png"/>
   </manifest>
-  <spine toc="ncx"><itemref idref="c1"/><itemref idref="c2"/></spine>
+  <spine toc="ncx"><itemref idref="cv"/><itemref idref="c1"/><itemref idref="c2"/></spine>
 </package>"#,
         ),
         (
@@ -54,12 +70,24 @@ fn build_epub() -> Vec<u8> {
         (
             "OEBPS/ch2.xhtml",
             r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>c2</title></head>
-<body><h2>Two</h2><p>Morning came.</p></body></html>"#,
+<body><h2>Two</h2><p>Morning came.</p><img src="images/pic.png" alt="Sunrise"/></body></html>"#,
+        ),
+        (
+            "OEBPS/text/cover.xhtml",
+            r#"<html xmlns="http://www.w3.org/1999/xhtml"><body>
+<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="../images/cover.jpg"/></svg></body></html>"#,
         ),
     ];
     for (name, body) in files {
         zip.start_file(*name, stored).unwrap();
         zip.write_all(body.as_bytes()).unwrap();
+    }
+    for (name, data) in [
+        ("OEBPS/images/cover.jpg", JPEG),
+        ("OEBPS/images/pic.png", PNG),
+    ] {
+        zip.start_file(name, stored).unwrap();
+        zip.write_all(data).unwrap();
     }
     zip.finish().unwrap();
     buf.into_inner()
@@ -86,7 +114,7 @@ fn palm_db(kind: &[u8; 8], records: &[Vec<u8>]) -> Vec<u8> {
 
 fn build_mobi(encryption: u16) -> Vec<u8> {
     let text = "<html><body><h1>Chapter 1</h1><p>Caf\u{e9} opens.</p>\
-                <mbp:pagebreak/><h2>Chapter 2</h2><p>It closes.</p></body></html>";
+                <mbp:pagebreak/><h2>Chapter 2</h2><p>It closes.</p><img recindex=\"00001\"/></body></html>";
     let text = text.as_bytes();
 
     let header_len = 0xE8usize;
@@ -101,15 +129,19 @@ fn build_mobi(encryption: u16) -> Vec<u8> {
     rec0[28..32].copy_from_slice(&65001u32.to_be_bytes()); // UTF-8
     rec0[128..132].copy_from_slice(&0x40u32.to_be_bytes()); // has EXTH
     rec0[0xF2..0xF4].copy_from_slice(&1u16.to_be_bytes()); // multibyte trailer
+    rec0[0x6C..0x70].copy_from_slice(&2u32.to_be_bytes()); // first image record
 
-    // EXTH with an author.
+    // EXTH with an author and a cover (image offset 1 => record 3).
     let author = b"John Roe";
     rec0.extend_from_slice(b"EXTH");
-    rec0.extend_from_slice(&((12 + 8 + author.len()) as u32).to_be_bytes());
-    rec0.extend_from_slice(&1u32.to_be_bytes());
+    rec0.extend_from_slice(&((12 + 8 + author.len() + 12) as u32).to_be_bytes());
+    rec0.extend_from_slice(&2u32.to_be_bytes());
     rec0.extend_from_slice(&100u32.to_be_bytes());
     rec0.extend_from_slice(&((8 + author.len()) as u32).to_be_bytes());
     rec0.extend_from_slice(author);
+    rec0.extend_from_slice(&201u32.to_be_bytes());
+    rec0.extend_from_slice(&12u32.to_be_bytes());
+    rec0.extend_from_slice(&1u32.to_be_bytes());
 
     // Full name.
     let name = b"Mobi Book";
@@ -121,7 +153,7 @@ fn build_mobi(encryption: u16) -> Vec<u8> {
     let mut rec1 = text.to_vec();
     rec1.push(0x00); // multibyte trailer: (0 & 3) + 1 = 1 byte
 
-    palm_db(b"BOOKMOBI", &[rec0, rec1])
+    palm_db(b"BOOKMOBI", &[rec0, rec1, PNG.to_vec(), JPEG.to_vec()])
 }
 
 #[test]
@@ -131,11 +163,31 @@ fn epub() {
     assert_eq!(book.metadata.title, "Test Book");
     assert_eq!(book.metadata.authors, ["Jane Doe"]);
     assert_eq!(book.metadata.language.as_deref(), Some("en"));
-    assert_eq!(book.chapters.len(), 2);
+    // A picture-only cover page is kept, as its own section.
+    assert_eq!(book.chapters.len(), 3);
+    assert_eq!(book.chapters[0].text, "");
+    assert_eq!(
+        book.chapters[0].blocks,
+        [Block::Image {
+            image: 0,
+            alt: String::new()
+        }]
+    );
     // Title from the NCX, then falling back to the first heading.
-    assert_eq!(book.chapters[0].title, "The Beginning");
-    assert_eq!(book.chapters[1].title, "Two");
-    assert_eq!(book.chapters[0].text, "One\n\nIt was a dark night.");
+    assert_eq!(book.chapters[1].title, "The Beginning");
+    assert_eq!(book.chapters[2].title, "Two");
+    assert_eq!(book.chapters[1].text, "One\n\nIt was a dark night.");
+    assert_eq!(
+        book.chapters[2].blocks.last(),
+        Some(&Block::Image {
+            image: 1,
+            alt: "Sunrise".into()
+        })
+    );
+    assert_eq!(book.images.len(), 2);
+    assert_eq!(book.images[1].media_type, "image/png");
+    assert_eq!(book.images[1].data, PNG);
+    assert_eq!(book.cover_image().unwrap().media_type, "image/jpeg");
 }
 
 #[test]
@@ -148,6 +200,12 @@ fn mobi() {
     assert_eq!(titles, ["Chapter 1", "Chapter 2"]);
     assert_eq!(book.chapters[0].text, "Chapter 1\n\nCaf\u{e9} opens.");
     assert_eq!(book.chapters[1].text, "Chapter 2\n\nIt closes.");
+    assert!(matches!(
+        book.chapters[1].blocks.last(),
+        Some(Block::Image { .. })
+    ));
+    assert_eq!(book.images[0].data, PNG);
+    assert_eq!(book.cover_image().unwrap().data, JPEG);
 }
 
 #[test]

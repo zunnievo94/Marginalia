@@ -21,6 +21,17 @@ pub fn find_executable() -> Option<std::path::PathBuf> {
     std::env::split_paths(&path).find_map(|d| names.iter().map(|n| d.join(n)).find(|p| p.is_file()))
 }
 
+/// eSpeak NG voice name for a book language such as `en-US`, `vi`,
+/// `zh-CN` or `zh_TW` (eSpeak calls Mandarin `cmn` and Cantonese `yue`).
+pub fn voice_for_language(lang: &str) -> String {
+    let lang = lang.replace('_', "-").to_lowercase();
+    match lang.as_str() {
+        "zh-hk" | "zh-mo" | "yue" => "yue".into(),
+        l if l == "zh" || l.starts_with("zh-") || l == "cmn" => "cmn".into(),
+        l => l.into(),
+    }
+}
+
 pub struct EspeakEngine {
     executable: std::path::PathBuf,
     voice: String,
@@ -58,5 +69,19 @@ impl Synthesizer for EspeakEngine {
             bail!("espeak-ng failed with {status}");
         }
         Audio::read_wav(wav.path())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::voice_for_language;
+
+    #[test]
+    fn maps_languages() {
+        assert_eq!(voice_for_language("zh-CN"), "cmn");
+        assert_eq!(voice_for_language("zh_TW"), "cmn");
+        assert_eq!(voice_for_language("zh-HK"), "yue");
+        assert_eq!(voice_for_language("vi"), "vi");
+        assert_eq!(voice_for_language("en_US"), "en-us");
     }
 }

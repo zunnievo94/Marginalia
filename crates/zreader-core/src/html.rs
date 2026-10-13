@@ -11,9 +11,51 @@ pub struct Converted {
     pub text: String,
     /// Text of the first `<h1>`..`<h3>` heading, if any.
     pub heading: Option<String>,
+    /// Paragraphs and images in document order. The text blocks are exactly
+    /// the paragraphs of `text`.
+    pub blocks: Vec<RawBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RawBlock {
+    Text(String),
+    /// An image as referenced by the markup: a URL/path from `src` (or SVG
+    /// `href`), or `recindex:N` for Mobipocket image records.
+    Image {
+        src: String,
+        alt: String,
+    },
 }
 
 const LINE_BREAK: char = '\u{1}';
+
+/// Decode an (X)HTML file to text, honouring a BOM, the XML declaration's
+/// `encoding` or a `<meta charset>`; defaults to UTF-8. Ebooks in Chinese
+/// sometimes use GBK/GB18030 or Big5, and some files are UTF-16.
+pub fn decode_markup(bytes: &[u8]) -> String {
+    if let Some((enc, bom_len)) = encoding_rs::Encoding::for_bom(bytes) {
+        return enc
+            .decode_without_bom_handling(&bytes[bom_len..])
+            .0
+            .into_owned();
+    }
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]).to_ascii_lowercase();
+    let declared = ["encoding=", "charset="].iter().find_map(|key| {
+        let at = head.find(key)? + key.len();
+        let value: String = head[at..]
+            .trim_start_matches(['"', '\''])
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            .collect();
+        encoding_rs::Encoding::for_label(value.as_bytes())
+    });
+    let enc = match declared {
+        // A file that claims a legacy encoding but is valid UTF-8 is UTF-8.
+        Some(e) if e != encoding_rs::UTF_8 && std::str::from_utf8(bytes).is_err() => e,
+        _ => encoding_rs::UTF_8,
+    };
+    enc.decode_without_bom_handling(bytes).0.into_owned()
+}
 
 /// Convert HTML to plain text.
 pub fn to_text(html: &str) -> String {
@@ -24,6 +66,7 @@ pub fn to_text(html: &str) -> String {
 pub fn convert(html: &str) -> Converted {
     let mut out = Out::default();
     let mut skip_depth = 0usize; // inside <script>, <style>, <head>...
+    let mut svg_depth = 0usize;
     let mut heading: Option<String> = None;
     let mut in_heading = false;
     let mut heading_buf = String::new();
@@ -31,7 +74,7 @@ pub fn convert(html: &str) -> Converted {
     let mut rest = html;
     while !rest.is_empty() {
         let Some(lt) = rest.find('<') else {
-            if skip_depth == 0 {
+            if skip_depth == 0 && svg_depth == 0 {
                 out.text(rest);
                 if in_heading {
                     heading_buf.push_str(rest);
@@ -40,7 +83,7 @@ pub fn convert(html: &str) -> Converted {
             break;
         };
         let (txt, after) = rest.split_at(lt);
-        if skip_depth == 0 {
+        if skip_depth == 0 && svg_depth == 0 {
             out.text(txt);
             if in_heading {
                 heading_buf.push_str(txt);
@@ -55,7 +98,7 @@ pub fn convert(html: &str) -> Converted {
         }
         if let Some(r) = rest.strip_prefix("<![CDATA[") {
             let end = r.find("]]>").unwrap_or(r.len());
-            if skip_depth == 0 {
+            if skip_depth == 0 && svg_depth == 0 {
                 out.text(&r[..end]);
             }
             rest = r.get(end + 3..).unwrap_or("");
@@ -72,7 +115,7 @@ pub fn convert(html: &str) -> Converted {
             .is_some_and(|c| c.is_ascii_alphabetic() || c == '/');
         if !starts_tag {
             // A stray '<' in text, e.g. "a < b".
-            if skip_depth == 0 {
+            if skip_depth == 0 && svg_depth == 0 {
                 out.text("<");
                 if in_heading {
                     heading_buf.push('<');
@@ -98,7 +141,7 @@ pub fn convert(html: &str) -> Converted {
         }
         let self_closing = tag.ends_with('/');
 
-        if matches!(name.as_str(), "script" | "style" | "head" | "svg") {
+        if matches!(name.as_str(), "script" | "style" | "head") {
             if closing {
                 skip_depth = skip_depth.saturating_sub(1);
             } else if !self_closing {
@@ -106,8 +149,34 @@ pub fn convert(html: &str) -> Converted {
             }
             continue;
         }
+        if name == "svg" {
+            if closing {
+                svg_depth = svg_depth.saturating_sub(1);
+            } else if !self_closing {
+                svg_depth += 1;
+            }
+            continue;
+        }
         if skip_depth > 0 {
             continue;
+        }
+        if !closing && (name == "img" || (svg_depth > 0 && name == "image")) {
+            let src = attr(tag, "src")
+                .or_else(|| attr(tag, "xlink:href"))
+                .or_else(|| attr(tag, "href"))
+                .or_else(|| {
+                    // Mobipocket: <img recindex="00001">
+                    let n: usize = attr(tag, "recindex")?.trim().parse().ok()?;
+                    Some(format!("recindex:{n}"))
+                });
+            if let Some(src) = src.filter(|s| !s.trim().is_empty()) {
+                let alt = attr(tag, "alt").map(|a| collapse(&a)).unwrap_or_default();
+                out.image(src.trim().to_string(), alt);
+            }
+            continue;
+        }
+        if svg_depth > 0 {
+            continue; // SVG text/shapes are not readable prose
         }
 
         if matches!(name.as_str(), "h1" | "h2" | "h3") {
@@ -131,10 +200,61 @@ pub fn convert(html: &str) -> Converted {
     }
     out.paragraph_break();
 
+    let (text, blocks) = out.finish();
     Converted {
-        text: out.finish(),
+        text,
         heading,
+        blocks,
     }
+}
+
+/// Value of attribute `name` in a raw tag such as `img src="a.png" alt=x`.
+fn attr(tag: &str, name: &str) -> Option<String> {
+    let b = tag.as_bytes();
+    // Skip the tag name.
+    let mut i = tag.find(|c: char| c.is_whitespace()).unwrap_or(tag.len());
+    while i < b.len() {
+        while i < b.len() && (b[i].is_ascii_whitespace() || b[i] == b'/') {
+            i += 1;
+        }
+        let start = i;
+        while i < b.len() && !b[i].is_ascii_whitespace() && !matches!(b[i], b'=' | b'/' | b'>') {
+            i += 1;
+        }
+        let key = &tag[start..i];
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let mut value = None;
+        if i < b.len() && b[i] == b'=' {
+            i += 1;
+            while i < b.len() && b[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let (vstart, vend) = if i < b.len() && (b[i] == b'"' || b[i] == b'\'') {
+                let q = b[i];
+                let s = i + 1;
+                let e = tag[s..].find(q as char).map_or(tag.len(), |p| s + p);
+                i = (e + 1).min(tag.len());
+                (s, e)
+            } else {
+                let s = i;
+                while i < b.len() && !b[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                (s, i)
+            };
+            value = Some(&tag[vstart..vend]);
+        }
+        if key.is_empty() {
+            i += 1;
+            continue;
+        }
+        if key.eq_ignore_ascii_case(name) {
+            return Some(decode(value.unwrap_or("")));
+        }
+    }
+    None
 }
 
 /// Byte index of the `>` that closes the tag starting at `s[0] == '<'`,
@@ -199,6 +319,7 @@ fn collapse(s: &str) -> String {
 #[derive(Default)]
 struct Out {
     paragraphs: Vec<String>,
+    blocks: Vec<RawBlock>,
     current: String,
 }
 
@@ -223,12 +344,19 @@ impl Out {
             .filter(|l| !l.is_empty())
             .collect();
         if !lines.is_empty() {
-            self.paragraphs.push(lines.join("\n"));
+            let p = lines.join("\n");
+            self.blocks.push(RawBlock::Text(p.clone()));
+            self.paragraphs.push(p);
         }
     }
 
-    fn finish(self) -> String {
-        self.paragraphs.join("\n\n")
+    fn image(&mut self, src: String, alt: String) {
+        self.paragraph_break();
+        self.blocks.push(RawBlock::Image { src, alt });
+    }
+
+    fn finish(self) -> (String, Vec<RawBlock>) {
+        (self.paragraphs.join("\n\n"), self.blocks)
     }
 }
 
@@ -250,6 +378,50 @@ mod tests {
         assert_eq!(
             c.text,
             "Chapter One\n\nHello, world & friends.\n\nLine one\nLine two\n\n5 < 6"
+        );
+    }
+
+    #[test]
+    fn images_in_order() {
+        let c = convert(
+            r#"<p>Before</p><div><img alt="A map" src="../img/map%20one.png"/></div>
+               <svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href='cover.jpg'/><text>no</text></svg>
+               <p>After <img recindex="00003"> text</p>"#,
+        );
+        let img = |src: &str, alt: &str| RawBlock::Image {
+            src: src.into(),
+            alt: alt.into(),
+        };
+        assert_eq!(
+            c.blocks,
+            vec![
+                RawBlock::Text("Before".into()),
+                img("../img/map%20one.png", "A map"),
+                img("cover.jpg", ""),
+                RawBlock::Text("After".into()),
+                img("recindex:3", ""),
+                RawBlock::Text("text".into()),
+            ]
+        );
+        assert_eq!(c.text, "Before\n\nAfter\n\ntext");
+    }
+
+    #[test]
+    fn decodes_legacy_encodings() {
+        let html = "<?xml version=\"1.0\" encoding=\"GBK\"?><p>你好，世界</p>";
+        let (gbk, _, _) = encoding_rs::GBK.encode(html);
+        assert_eq!(to_text(&decode_markup(&gbk)), "你好，世界");
+
+        let mut utf16 = vec![0xFF, 0xFE];
+        for u in "<p>Tiếng Việt</p>".encode_utf16() {
+            utf16.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(to_text(&decode_markup(&utf16)), "Tiếng Việt");
+
+        let mislabelled = "<meta charset=\"iso-8859-1\"><p>Tiếng Việt</p>";
+        assert_eq!(
+            to_text(&decode_markup(mislabelled.as_bytes())),
+            "Tiếng Việt"
         );
     }
 

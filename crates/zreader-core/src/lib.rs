@@ -13,7 +13,7 @@ pub mod text;
 
 use std::path::Path;
 
-pub use book::{Book, Chapter, Format, Metadata};
+pub use book::{sniff_image, Block, Book, Chapter, Format, Image, Metadata};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

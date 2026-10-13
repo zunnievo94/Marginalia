@@ -160,7 +160,7 @@ fn espeak_engine(lang: &str, args: &TtsArgs) -> Result<EspeakEngine> {
     // A Piper key such as en_US-lessac-medium is not an eSpeak voice.
     let voice = match &args.voice {
         Some(v) if args.engine == EngineKind::Espeak => v.clone(),
-        _ => lang.replace('_', "-").to_lowercase(),
+        _ => zreader_tts::espeak::voice_for_language(lang),
     };
     EspeakEngine::new(&voice, args.speed)
 }
@@ -197,7 +197,7 @@ fn resolve_voice(lang: &str, args: &TtsArgs) -> Result<InstalledVoice> {
     let key = match &args.voice {
         Some(key) => key.clone(),
         None => {
-            if let Some(v) = installed_for_language(lang)? {
+            if let Some(v) = catalog::installed_for_language(lang)? {
                 return Ok(v);
             }
             let voices = catalog::load(false)?;
@@ -222,16 +222,4 @@ fn resolve_voice(lang: &str, args: &TtsArgs) -> Result<InstalledVoice> {
     let installed = voice.download(&mut progress_bar(&key))?;
     eprintln!();
     Ok(installed)
-}
-
-fn installed_for_language(lang: &str) -> Result<Option<InstalledVoice>> {
-    let lang = lang.replace('-', "_").to_lowercase();
-    let family = lang.split('_').next().unwrap_or_default().to_string();
-    let installed = InstalledVoice::list()?;
-    let code_of = |v: &InstalledVoice| v.key.split('-').next().unwrap_or_default().to_lowercase();
-    let exact = installed.iter().find(|v| code_of(v) == lang);
-    let by_family = installed
-        .iter()
-        .find(|v| code_of(v).split('_').next() == Some(family.as_str()));
-    Ok(exact.or(by_family).cloned())
 }

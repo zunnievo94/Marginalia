@@ -151,7 +151,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Toc { book } => {
             let b = open(&book)?;
             for (i, c) in b.chapters.iter().enumerate() {
-                let words = c.text.split_whitespace().count();
+                let words = zreader_core::text::word_count(&c.text);
                 println!("{:>4}  {}  ({words} words)", i + 1, c.title);
             }
         }

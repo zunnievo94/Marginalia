@@ -143,6 +143,20 @@ pub fn default_for_language<'a>(voices: &'a [Voice], lang: &str) -> Option<&'a V
         })
 }
 
+/// An installed voice for a language such as `en`, `en-GB` or `fr_FR`:
+/// exact locale first, then any voice of the same language family.
+pub fn installed_for_language(lang: &str) -> Result<Option<InstalledVoice>> {
+    let lang = lang.replace('-', "_").to_lowercase();
+    let family = lang.split('_').next().unwrap_or_default().to_string();
+    let installed = InstalledVoice::list()?;
+    let code_of = |v: &InstalledVoice| v.key.split('-').next().unwrap_or_default().to_lowercase();
+    let exact = installed.iter().find(|v| code_of(v) == lang);
+    let by_family = installed
+        .iter()
+        .find(|v| code_of(v).split('_').next() == Some(family.as_str()));
+    Ok(exact.or(by_family).cloned())
+}
+
 /// A voice model present on disk.
 #[derive(Debug, Clone)]
 pub struct InstalledVoice {

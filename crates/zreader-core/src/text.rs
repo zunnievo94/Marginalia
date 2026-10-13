@@ -1,4 +1,37 @@
-//! Text utilities used by the TTS pipeline.
+//! Text utilities used by the reader and the TTS pipeline.
+
+/// Chinese/Japanese/Korean characters, which are written without spaces
+/// and so are counted (and spaced) one by one.
+pub fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF   // Hiragana, Katakana
+        | 0x3400..=0x4DBF // CJK Extension A
+        | 0x4E00..=0x9FFF // CJK Unified Ideographs
+        | 0xAC00..=0xD7AF // Hangul syllables
+        | 0xF900..=0xFAFF // CJK Compatibility Ideographs
+        | 0x20000..=0x2FFFF)
+}
+
+/// Word count that also works for scripts without spaces: every CJK
+/// character counts as one word.
+pub fn word_count(text: &str) -> usize {
+    let mut count = 0;
+    let mut in_word = false;
+    for c in text.chars() {
+        if is_cjk(c) {
+            count += 1;
+            in_word = false;
+        } else if c.is_alphanumeric() {
+            if !in_word {
+                count += 1;
+                in_word = true;
+            }
+        } else if c.is_whitespace() || !matches!(c, '\'' | '’' | '-') {
+            in_word = false;
+        }
+    }
+    count
+}
 
 /// Split text into speakable chunks: sentences, never longer than
 /// `max_chars` (long sentences are broken at commas or spaces).
@@ -14,6 +47,27 @@ pub fn speech_chunks(text: &str, max_chars: usize) -> Vec<String> {
         }
     }
     chunks
+}
+
+/// Paragraphs of a chapter, each split into sentences. This is the unit
+/// used both to display text and to track what is being read aloud, so a
+/// paragraph without any sentence (e.g. `* * *`) is kept whole.
+pub fn paragraph_sentences(text: &str) -> Vec<Vec<String>> {
+    text.split("\n\n")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(sentences_or_whole)
+        .collect()
+}
+
+/// Sentences of one paragraph, or the paragraph itself if it has none.
+pub fn sentences_or_whole(paragraph: &str) -> Vec<String> {
+    let s = sentences(paragraph);
+    if s.is_empty() {
+        vec![paragraph.trim().to_string()]
+    } else {
+        s
+    }
 }
 
 /// Split one paragraph into sentences.
@@ -72,11 +126,11 @@ fn ends_with_abbreviation(s: &str) -> bool {
         .split_whitespace()
         .last()
         .unwrap_or("")
-        .trim_start_matches(|c: char| !c.is_alphanumeric())
-        .to_lowercase();
-    // Single initials such as "J." in "J. R. R. Tolkien".
-    let is_initial = last.chars().count() == 2 && last.starts_with(char::is_alphabetic);
-    is_initial || ABBREVIATIONS.contains(&last.as_str())
+        .trim_start_matches(|c: char| !c.is_alphanumeric());
+    // Single capital initials such as "J." in "J. R. R. Tolkien" (but not a
+    // one-letter word ending a sentence, like Vietnamese "ở.").
+    let is_initial = last.chars().count() == 2 && last.starts_with(char::is_uppercase);
+    is_initial || ABBREVIATIONS.contains(&last.to_lowercase().as_str())
 }
 
 fn split_long(sentence: &str, max_chars: usize, out: &mut Vec<String>) {
@@ -127,8 +181,43 @@ mod tests {
     }
 
     #[test]
+    fn paragraphs_keep_separators() {
+        let p = paragraph_sentences("One. Two.\n\n* * *\n\nThree.");
+        assert_eq!(p, vec![vec!["One.", "Two."], vec!["* * *"], vec!["Three."]]);
+    }
+
+    #[test]
     fn cjk() {
         assert_eq!(sentences("你好。世界！"), vec!["你好。", "世界！"]);
+        assert_eq!(
+            sentences("他说：“你好。”然后走了。"),
+            vec!["他说：“你好。”", "然后走了。"]
+        );
+    }
+
+    #[test]
+    fn vietnamese() {
+        assert_eq!(
+            sentences("Tôi ở đây. Anh ở. Ông Nguyễn đến lúc 3.5 giờ chiều!"),
+            vec!["Tôi ở đây.", "Anh ở.", "Ông Nguyễn đến lúc 3.5 giờ chiều!"]
+        );
+    }
+
+    #[test]
+    fn counts_words_in_any_script() {
+        assert_eq!(word_count("Hello, world! It's fine."), 4);
+        assert_eq!(word_count("Xin chào thế giới."), 4);
+        assert_eq!(word_count("你好，世界。"), 4);
+        assert_eq!(word_count("ZReader 读书"), 3);
+    }
+
+    #[test]
+    fn long_chinese_sentence_is_split_at_commas() {
+        let s = "这是一个很长的句子，".repeat(30) + "结束。";
+        let chunks = speech_chunks(&s, 50);
+        assert!(chunks.iter().all(|c| c.chars().count() <= 50));
+        assert!(chunks[0].ends_with('，'));
+        assert_eq!(chunks.concat(), s);
     }
 
     #[test]
