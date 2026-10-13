@@ -8,6 +8,7 @@ mod book;
 mod epub_format;
 pub mod html;
 mod huff;
+mod kf8;
 mod mobi_format;
 pub mod search;
 pub mod text;

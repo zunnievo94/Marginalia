@@ -14,20 +14,20 @@ const COMPRESSION_NONE: u16 = 1;
 const COMPRESSION_PALMDOC: u16 = 2;
 const COMPRESSION_HUFF: u16 = 17480;
 
-fn err(msg: impl Into<String>) -> Error {
+pub(crate) fn err(msg: impl Into<String>) -> Error {
     Error::Mobi(msg.into())
 }
 
-fn u16_at(b: &[u8], off: usize) -> Option<u16> {
+pub(crate) fn u16_at(b: &[u8], off: usize) -> Option<u16> {
     Some(u16::from_be_bytes(b.get(off..off + 2)?.try_into().ok()?))
 }
 
-fn u32_at(b: &[u8], off: usize) -> Option<u32> {
+pub(crate) fn u32_at(b: &[u8], off: usize) -> Option<u32> {
     Some(u32::from_be_bytes(b.get(off..off + 4)?.try_into().ok()?))
 }
 
 /// The record table of a Palm database.
-struct PalmDb<'a> {
+pub(crate) struct PalmDb<'a> {
     bytes: &'a [u8],
     offsets: Vec<usize>,
 }
@@ -51,7 +51,7 @@ impl<'a> PalmDb<'a> {
         String::from_utf8_lossy(&raw[..end]).replace('_', " ")
     }
 
-    fn record(&self, i: usize) -> Option<&'a [u8]> {
+    pub(crate) fn record(&self, i: usize) -> Option<&'a [u8]> {
         let start = *self.offsets.get(i)?;
         let end = self
             .offsets
@@ -67,9 +67,8 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
     let db = PalmDb::parse(bytes)?;
     let rec0 = db.record(0).ok_or_else(|| err("missing record 0"))?;
 
-    let compression = u16_at(rec0, 0).ok_or_else(|| err("short record 0"))?;
+    u16_at(rec0, 0).ok_or_else(|| err("short record 0"))?;
     let text_length = u32_at(rec0, 4).unwrap_or(u32::MAX) as usize;
-    let record_count = u16_at(rec0, 8).unwrap_or(0) as usize;
     let encryption = u16_at(rec0, 12).unwrap_or(0);
     let is_mobi = Format::detect(bytes) == Some(Format::Mobi);
     let has_mobi_header = rec0.get(16..20) == Some(b"MOBI");
@@ -80,31 +79,11 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
     }
 
     let header = has_mobi_header.then(|| MobiHeader::parse(rec0));
-    let extra_flags = header.as_ref().map_or(0, |h| h.extra_flags);
 
-    let mut huff = if compression == COMPRESSION_HUFF {
-        let h = header
-            .as_ref()
-            .ok_or_else(|| err("HUFF book without MOBI header"))?;
-        let records: Vec<&[u8]> = (h.first_huff..h.first_huff + h.huff_count)
-            .map(|i| db.record(i).ok_or_else(|| err("missing HUFF record")))
-            .collect::<Result<_>>()?;
-        Some(HuffReader::new(&records)?)
-    } else {
-        None
+    let mut raw = match &header {
+        Some(h) => read_text(&db, 0, rec0, h)?,
+        None => read_text(&db, 0, rec0, &MobiHeader::parse(rec0))?,
     };
-
-    let mut raw = Vec::with_capacity(text_length.min(64 << 20));
-    for i in 1..=record_count {
-        let Some(rec) = db.record(i) else { break };
-        let rec = strip_trailing_entries(rec, extra_flags);
-        match compression {
-            COMPRESSION_NONE => raw.extend_from_slice(rec),
-            COMPRESSION_PALMDOC => palmdoc_decompress(rec, &mut raw),
-            COMPRESSION_HUFF => raw.extend(huff.as_mut().expect("set above").unpack(rec)?),
-            other => return Err(err(format!("unknown compression {other}"))),
-        }
-    }
     raw.truncate(text_length);
     // Some converters write UTF-8 text but label it CP1252 (or PalmDOC,
     // which has no encoding field); valid UTF-8 is never an accident.
@@ -121,8 +100,32 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
         title: db.name(),
         ..Metadata::default()
     };
-    let cover_offset = header.as_ref().and_then(|h| h.apply(rec0, &mut metadata));
+    let exth = header
+        .as_ref()
+        .map(|h| h.apply(rec0, &mut metadata))
+        .unwrap_or_default();
+    let cover_offset = exth.cover;
     let first_image = header.as_ref().map_or(0, |h| h.first_image);
+
+    // KF8 (AZW3): either the whole book (header version 8) or a second
+    // book after a BOUNDARY record in "hybrid" files. Prefer it: it keeps
+    // the real chapter structure. Fall back to the old MOBI text if it
+    // cannot be read.
+    let kf8_base = match (&header, exth.kf8_boundary) {
+        (Some(h), _) if h.version == 8 => Some(0),
+        (_, Some(b)) if b > 0 && db.record(b - 1).is_some_and(|r| r.starts_with(b"BOUNDARY")) => {
+            Some(b)
+        }
+        _ => None,
+    };
+    if let Some(base) = kf8_base {
+        let shared_resources = (base > 0 && first_image > 0).then_some(first_image);
+        if let Ok(book) =
+            crate::kf8::parse(&db, base, metadata.clone(), cover_offset, shared_resources)
+        {
+            return Ok(book);
+        }
+    }
 
     // Image records are numbered from the header's first-image record.
     let mut images = Vec::new();
@@ -167,17 +170,43 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Book> {
     })
 }
 
-struct MobiHeader {
-    header_len: usize,
-    encoding: u32,
+pub(crate) struct MobiHeader {
+    pub(crate) header_len: usize,
+    pub(crate) encoding: u32,
+    pub(crate) version: u32,
     extra_flags: u16,
     first_huff: usize,
     huff_count: usize,
-    first_image: usize,
+    pub(crate) first_image: usize,
+    /// KF8 tables (record numbers relative to the header's record 0).
+    pub(crate) fdst: Option<usize>,
+    pub(crate) ncx: Option<usize>,
+    pub(crate) fragments: Option<usize>,
+    pub(crate) skeletons: Option<usize>,
+}
+
+/// What the EXTH block told us besides metadata.
+#[derive(Default)]
+pub(crate) struct ExthInfo {
+    /// Cover image, as an offset from the first image record.
+    pub(crate) cover: Option<usize>,
+    /// Record number of the KF8 header in hybrid files.
+    kf8_boundary: Option<usize>,
+}
+
+fn index_field(rec0: &[u8], header_len: usize, off: usize) -> Option<usize> {
+    // Only present if the MOBI header (starting at 16) reaches the field.
+    if 16 + header_len < off + 4 {
+        return None;
+    }
+    match u32_at(rec0, off)? {
+        u32::MAX | 0 => None,
+        n => Some(n as usize),
+    }
 }
 
 impl MobiHeader {
-    fn parse(rec0: &[u8]) -> Self {
+    pub(crate) fn parse(rec0: &[u8]) -> Self {
         let header_len = u32_at(rec0, 20).unwrap_or(0) as usize;
         let encoding = u32_at(rec0, 28).unwrap_or(1252);
         let extra_flags = if header_len >= 0xE4 {
@@ -195,12 +224,17 @@ impl MobiHeader {
                 Some(n) if n != u32::MAX => n as usize,
                 _ => 0,
             },
+            version: u32_at(rec0, 0x24).unwrap_or(0),
+            fdst: index_field(rec0, header_len, 0xC0),
+            ncx: index_field(rec0, header_len, 0xF4),
+            fragments: index_field(rec0, header_len, 0xF8),
+            skeletons: index_field(rec0, header_len, 0xFC),
         }
     }
 
     /// Fill in metadata from the header and EXTH; returns the cover's
     /// offset from the first image record, if the book declares one.
-    fn apply(&self, rec0: &[u8], meta: &mut Metadata) -> Option<usize> {
+    pub(crate) fn apply(&self, rec0: &[u8], meta: &mut Metadata) -> ExthInfo {
         let utf8 = self.encoding == 65001;
         // Full name.
         if let (Some(off), Some(len)) = (u32_at(rec0, 84), u32_at(rec0, 88)) {
@@ -214,10 +248,10 @@ impl MobiHeader {
         // EXTH block.
         let has_exth = u32_at(rec0, 128).unwrap_or(0) & 0x40 != 0;
         let exth = 16 + self.header_len;
+        let mut info = ExthInfo::default();
         if !has_exth || rec0.get(exth..exth + 4) != Some(b"EXTH") {
-            return None;
+            return info;
         }
-        let mut cover = None;
         let count = u32_at(rec0, exth + 8).unwrap_or(0);
         let mut pos = exth + 12;
         for _ in 0..count {
@@ -239,17 +273,58 @@ impl MobiHeader {
                 503 if !value.is_empty() => meta.title = value,
                 524 if !value.is_empty() => meta.language = Some(value),
                 201 if data.len() == 4 => {
-                    cover = u32_at(data, 0).map(|v| v as usize);
+                    info.cover = u32_at(data, 0).map(|v| v as usize);
+                }
+                121 if data.len() == 4 => {
+                    info.kf8_boundary = u32_at(data, 0)
+                        .filter(|&v| v != u32::MAX)
+                        .map(|v| v as usize);
                 }
                 _ => {}
             }
             pos += len;
         }
-        cover
+        info
     }
 }
 
-fn decode(bytes: &[u8], utf8: bool) -> String {
+/// Decompressed text of the book whose record 0 is at `base`.
+pub(crate) fn read_text(
+    db: &PalmDb,
+    base: usize,
+    rec0: &[u8],
+    header: &MobiHeader,
+) -> Result<Vec<u8>> {
+    let compression = u16_at(rec0, 0).ok_or_else(|| err("short record 0"))?;
+    let record_count = u16_at(rec0, 8).unwrap_or(0) as usize;
+    let mut huff = if compression == COMPRESSION_HUFF {
+        let records: Vec<&[u8]> = (header.first_huff..header.first_huff + header.huff_count)
+            .map(|i| {
+                db.record(base + i)
+                    .ok_or_else(|| err("missing HUFF record"))
+            })
+            .collect::<Result<_>>()?;
+        Some(HuffReader::new(&records)?)
+    } else {
+        None
+    };
+    let mut raw = Vec::new();
+    for i in 1..=record_count {
+        let Some(rec) = db.record(base + i) else {
+            break;
+        };
+        let rec = strip_trailing_entries(rec, header.extra_flags);
+        match compression {
+            COMPRESSION_NONE => raw.extend_from_slice(rec),
+            COMPRESSION_PALMDOC => palmdoc_decompress(rec, &mut raw),
+            COMPRESSION_HUFF => raw.extend(huff.as_mut().expect("set above").unpack(rec)?),
+            other => return Err(err(format!("unknown compression {other}"))),
+        }
+    }
+    Ok(raw)
+}
+
+pub(crate) fn decode(bytes: &[u8], utf8: bool) -> String {
     let enc = if utf8 {
         encoding_rs::UTF_8
     } else {
