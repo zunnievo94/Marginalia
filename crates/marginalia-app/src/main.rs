@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod bookmarks;
 mod notes;
 mod speech;
 mod store;
@@ -312,6 +313,74 @@ async fn notes_export(
     Ok(Some(path.display().to_string()))
 }
 
+// --------------------------------------------------------- search, bookmarks
+
+#[derive(Serialize)]
+struct SearchHit {
+    chapter: usize,
+    paragraph: usize,
+    start: usize,
+    end: usize,
+    before: String,
+    matched: String,
+    after: String,
+}
+
+#[derive(Serialize)]
+struct SearchResult {
+    hits: Vec<SearchHit>,
+    /// More matches exist than were returned.
+    truncated: bool,
+}
+
+/// Case- and accent-insensitive search through the whole book.
+#[tauri::command]
+async fn book_search(
+    state: State<'_, AppState>,
+    id: String,
+    query: String,
+) -> CmdResult<SearchResult> {
+    const LIMIT: usize = 500;
+    let book = state.book(&id)?;
+    let hits = tauri::async_runtime::spawn_blocking(move || {
+        marginalia_core::search::search(&book, &query, LIMIT + 1)
+    })
+    .await
+    .map_err(err)?;
+    let truncated = hits.len() > LIMIT;
+    Ok(SearchResult {
+        hits: hits
+            .into_iter()
+            .take(LIMIT)
+            .map(|h| SearchHit {
+                chapter: h.chapter,
+                paragraph: h.paragraph,
+                start: h.start,
+                end: h.end,
+                before: h.before,
+                matched: h.matched,
+                after: h.after,
+            })
+            .collect(),
+        truncated,
+    })
+}
+
+#[tauri::command]
+fn bookmarks_list(id: String) -> Vec<bookmarks::Bookmark> {
+    bookmarks::load(&id)
+}
+
+#[tauri::command]
+fn bookmark_add(id: String, position: Position, label: String) -> CmdResult<bookmarks::Bookmark> {
+    bookmarks::add(&id, position, label).map_err(err)
+}
+
+#[tauri::command]
+fn bookmark_remove(id: String, bookmark_id: String) -> CmdResult<()> {
+    bookmarks::remove(&id, &bookmark_id).map_err(err)
+}
+
 // --------------------------------------------------------------- settings
 
 #[tauri::command]
@@ -517,6 +586,10 @@ fn main() {
             book_open,
             chapter_get,
             position_save,
+            book_search,
+            bookmarks_list,
+            bookmark_add,
+            bookmark_remove,
             notes_list,
             note_save,
             note_delete,

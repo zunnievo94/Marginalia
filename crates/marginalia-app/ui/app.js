@@ -11,6 +11,7 @@ const CJK_END = /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]["'”’
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const VIEW_TITLES = {
   chapters: "Chapters",
+  search: "Search",
   library: "Library",
   voices: "Voices",
   settings: "Settings",
@@ -36,6 +37,9 @@ const state = {
   downloads: {}, // key -> { done, total }
   chapterFilter: "",
   notes: [], // notes of the open book
+  bookmarks: [], // bookmarks of the open book
+  panelTab: "notes", // right panel: notes | bookmarks
+  search: { query: "", hits: [], truncated: false, active: -1 },
   notesFilter: "",
   editing: null, // note open in the editor
   pendingAnchor: null, // anchor of the current text selection
@@ -155,7 +159,7 @@ function renderSidebar() {
   const content = $("#sidebar-content");
   const scroll = content.scrollTop;
   content.replaceChildren();
-  ({ chapters: renderChapters, library: renderLibrary, voices: renderVoices, settings: renderSettings })[state.view](content);
+  ({ chapters: renderChapters, search: renderSearch, library: renderLibrary, voices: renderVoices, settings: renderSettings })[state.view](content);
   content.scrollTop = scroll;
 }
 
@@ -493,6 +497,8 @@ async function openBook(id) {
   const view = await call("book_open", { id });
   state.book = view;
   state.notes = await invoke("notes_list", { id }).catch(() => []);
+  state.bookmarks = await invoke("bookmarks_list", { id }).catch(() => []);
+  state.search = { query: "", hits: [], truncated: false, active: -1 };
   state.notesFilter = "";
   closeNoteEditor();
   state.cursor = null;
@@ -523,6 +529,8 @@ function closeBook() {
   state.blocks = [];
   state.paragraphs = [];
   state.notes = [];
+  state.bookmarks = [];
+  state.search = { query: "", hits: [], truncated: false, active: -1 };
   closeNoteEditor();
   renderContent();
   renderSidebar();
@@ -621,6 +629,8 @@ function renderContent() {
   reading.append(nav);
   content.replaceChildren(reading);
   applyNoteMarks();
+  applySearchMarks();
+  applyBookmarkMarks();
   if (state.speaking?.chapter === state.chapter) highlight(state.speaking, false);
 }
 
@@ -704,7 +714,8 @@ function savePosition(position) {
 
 const onScroll = debounce(() => {
   if (state.book && state.tts === "stopped") savePosition(visiblePosition());
-}, 500);
+  updateBookmarkButton();
+}, 300);
 
 // --------------------------------------------------------------- speech
 
@@ -852,6 +863,9 @@ function wire() {
     const mod = e.ctrlKey || e.metaKey;
     if (e.key === "Escape" && !$("#note-editor").hidden) { e.preventDefault(); closeNoteEditor(); return; }
     if (mod && e.shiftKey && e.key.toLowerCase() === "m") { e.preventDefault(); toggleNotesPanel(); return; }
+    if (mod && e.key.toLowerCase() === "f") { e.preventDefault(); openSearch(); return; }
+    if (mod && e.key.toLowerCase() === "d") { e.preventDefault(); toggleBookmark(); return; }
+    if (e.key === "F3" || (mod && e.key.toLowerCase() === "g")) { e.preventDefault(); nextHit(e.shiftKey ? -1 : 1); return; }
     if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); document.body.classList.toggle("sidebar-hidden"); renderSidebar(); }
     else if (mod && e.key.toLowerCase() === "o") { e.preventDefault(); pickBooks(); }
     else if (mod && e.key === "1") { e.preventDefault(); setViewIfHidden("chapters"); }
@@ -1147,7 +1161,11 @@ function renderNotesPanel(activeIds = []) {
   const list = $("#notes-list");
   if (!list) return;
   $("#notes-count").textContent = state.notes.length;
+  $("#bookmarks-count").textContent = state.bookmarks.length;
+  document.querySelectorAll(".panel-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === state.panelTab));
+  $("#notes-export").hidden = state.panelTab !== "notes";
   $("#notes-export").disabled = !state.notes.length;
+  if (state.panelTab === "bookmarks") return renderBookmarks(list);
   list.replaceChildren();
   if (!state.book) {
     list.append(el(`<div class="hint">Open a book to see its notes.</div>`));
@@ -1268,6 +1286,13 @@ function wireNotes() {
   $("#btn-notes").onclick = toggleNotesPanel;
   $("#st-notes").onclick = toggleNotesPanel;
   $("#notes-close").onclick = () => setNotesOpen(false);
+  document.querySelectorAll(".panel-tab").forEach((t) => {
+    t.onclick = () => {
+      state.panelTab = t.dataset.tab;
+      renderNotesPanel();
+    };
+  });
+  $("#btn-bookmark").onclick = toggleBookmark;
   $("#notes-filter").oninput = (e) => {
     state.notesFilter = e.target.value;
     renderNotesPanel();
@@ -1277,6 +1302,245 @@ function wireNotes() {
     const path = await call("notes_export", { id: state.book.entry.id });
     if (path) toast("Notes exported to " + path);
   };
+}
+
+// --------------------------------------------------------------- search
+
+function openSearch() {
+  if (!state.book) return;
+  const selected = window.getSelection().toString().trim();
+  if (selected && selected.length < 80 && !selected.includes("\n")) state.search.query = selected;
+  setViewIfHidden("search");
+  const input = $("#search-input");
+  input?.focus();
+  input?.select();
+  if (selected && state.search.query === selected) runSearch();
+}
+
+function renderSearch(root) {
+  if (!state.book) {
+    root.append(el(`<div class="hint">Open a book to search in it.</div>`));
+    return;
+  }
+  const box = el(`<div class="search-box">
+    <input type="search" id="search-input" placeholder="Search in this book" autocomplete="off" spellcheck="false">
+    <div class="meta" id="search-meta"></div></div>`);
+  const input = box.querySelector("input");
+  input.value = state.search.query;
+  input.oninput = () => {
+    state.search.query = input.value;
+    runSearch();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      nextHit(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Escape") {
+      input.value = "";
+      state.search.query = "";
+      runSearch();
+    }
+  };
+  root.append(box);
+  root.append(el(`<div id="search-results"></div>`));
+  renderSearchResults();
+  setTimeout(() => input.focus(), 0);
+}
+
+const runSearch = debounce(async () => {
+  if (!state.book) return;
+  const query = state.search.query;
+  if (!query.trim()) {
+    Object.assign(state.search, { hits: [], truncated: false, active: -1 });
+  } else {
+    const r = await invoke("book_search", { id: state.book.entry.id, query }).catch((e) => {
+      toast(String(e), { error: true });
+      return null;
+    });
+    if (!r || state.search.query !== query) return; // a newer search is running
+    Object.assign(state.search, { hits: r.hits, truncated: r.truncated, active: -1 });
+  }
+  renderSearchResults();
+  applySearchMarks();
+}, 200);
+
+function renderSearchResults() {
+  const results = $("#search-results");
+  const meta = $("#search-meta");
+  if (!results || !meta) return;
+  const { query, hits, truncated, active } = state.search;
+  results.replaceChildren();
+  if (!query.trim()) {
+    meta.textContent = "Ignores case and accents: “thung lung” finds “thung lũng”. Enter = next, Shift+Enter = previous.";
+    return;
+  }
+  const chapters = new Set(hits.map((h) => h.chapter)).size;
+  meta.textContent = hits.length
+    ? `${hits.length}${truncated ? "+" : ""} result${hits.length === 1 ? "" : "s"} in ${chapters} chapter${chapters === 1 ? "" : "s"}`
+    : "No results.";
+  const frag = document.createDocumentFragment();
+  let chapter = -1;
+  hits.forEach((h, i) => {
+    if (h.chapter !== chapter) {
+      chapter = h.chapter;
+      const count = hits.filter((x) => x.chapter === chapter).length;
+      frag.append(el(`<div class="search-group"><span>${esc(state.book.toc[chapter]?.title || `Chapter ${chapter + 1}`)}</span><span class="badge">${count}</span></div>`));
+    }
+    const lead = h.before.length >= 40 ? "…" + h.before.trimStart() : h.before;
+    const item = el(`<div class="search-hit${i === active ? " active" : ""}" data-i="${i}">${esc(lead)}<mark>${esc(h.matched)}</mark>${esc(h.after)}${h.after.length >= 40 ? "…" : ""}</div>`);
+    item.onclick = () => goToHit(i);
+    frag.append(item);
+  });
+  results.append(frag);
+}
+
+// DOM range of a search hit in the displayed chapter, or null.
+function hitRange(h) {
+  if (h.chapter !== state.chapter) return null;
+  const p = paragraphEl(h.paragraph);
+  if (!p) return null;
+  let { start, end } = h;
+  const text = p.textContent;
+  if (text.slice(start, end) !== h.matched) {
+    // Fall back to the nearest occurrence if the text layout differs.
+    const at = text.indexOf(h.matched);
+    if (at < 0) return null;
+    start = at;
+    end = at + h.matched.length;
+  }
+  const r = document.createRange();
+  r.setStart(...domPoint(p, start));
+  r.setEnd(...domPoint(p, end));
+  return r;
+}
+
+function applySearchMarks() {
+  if (!HAS_HIGHLIGHTS) return;
+  CSS.highlights.delete("search-hit");
+  CSS.highlights.delete("search-current");
+  const { hits, active } = state.search;
+  const ranges = [];
+  hits.forEach((h, i) => {
+    if (i === active) return;
+    const r = hitRange(h);
+    if (r) ranges.push(r);
+  });
+  if (ranges.length) CSS.highlights.set("search-hit", new Highlight(...ranges));
+  const current = hits[active] && hitRange(hits[active]);
+  if (current) CSS.highlights.set("search-current", new Highlight(current));
+}
+
+async function goToHit(i) {
+  const h = state.search.hits[i];
+  if (!h) return;
+  state.search.active = i;
+  await loadChapter(h.chapter, { scroll: "none" });
+  const r = hitRange(h);
+  const content = $("#content");
+  const box = content.getBoundingClientRect();
+  const rect = r ? r.getBoundingClientRect() : paragraphEl(h.paragraph)?.getBoundingClientRect();
+  if (rect && (rect.top < box.top + 30 || rect.bottom > box.bottom - 30)) {
+    content.scrollTop += rect.top - box.top - box.height / 3;
+  }
+  applySearchMarks();
+  document.querySelectorAll(".search-hit").forEach((n) => n.classList.toggle("active", Number(n.dataset.i) === i));
+  document.querySelector(".search-hit.active")?.scrollIntoView({ block: "nearest" });
+  // Reading aloud from here starts at the found sentence.
+  state.cursor = { chapter: h.chapter, paragraph: h.paragraph, sentence: 0 };
+}
+
+function nextHit(dir) {
+  const n = state.search.hits.length;
+  if (!n) return;
+  // From the current chapter, jump to the first hit after the visible text.
+  let i = state.search.active;
+  if (i < 0) i = dir > 0 ? -1 : 0;
+  goToHit((((i + dir) % n) + n) % n);
+}
+
+// ------------------------------------------------------------ bookmarks
+
+function bookmarkPosition() {
+  if (state.speaking && state.speaking.chapter === state.chapter && state.tts !== "stopped") return state.speaking;
+  return visiblePosition();
+}
+
+function bookmarkAt(pos) {
+  return state.bookmarks.find((b) => b.position.chapter === pos.chapter && b.position.paragraph === pos.paragraph);
+}
+
+async function toggleBookmark() {
+  if (!state.book) return;
+  const pos = bookmarkPosition();
+  const id = state.book.entry.id;
+  const existing = bookmarkAt(pos);
+  if (existing) {
+    await call("bookmark_remove", { id, bookmarkId: existing.id });
+    state.bookmarks = state.bookmarks.filter((b) => b.id !== existing.id);
+    toast("Bookmark removed.");
+  } else {
+    const label = paragraphEl(pos.paragraph)?.textContent.trim() || "";
+    const b = await call("bookmark_add", { id, position: { ...pos, sentence: 0 }, label });
+    state.bookmarks = state.bookmarks.concat(b).sort((x, y) =>
+      x.position.chapter - y.position.chapter || x.position.paragraph - y.position.paragraph);
+    toast("Bookmarked.", { timeout: 1500 });
+  }
+  applyBookmarkMarks();
+  if (state.panelTab === "bookmarks") renderNotesPanel();
+  else $("#bookmarks-count").textContent = state.bookmarks.length;
+}
+
+function applyBookmarkMarks() {
+  document.querySelectorAll(".reading p.bookmarked").forEach((p) => p.classList.remove("bookmarked"));
+  for (const b of state.bookmarks) {
+    if (b.position.chapter === state.chapter) paragraphEl(b.position.paragraph)?.classList.add("bookmarked");
+  }
+  updateBookmarkButton();
+}
+
+function updateBookmarkButton() {
+  const btn = $("#btn-bookmark");
+  if (!btn) return;
+  btn.disabled = !state.book;
+  btn.classList.toggle("on", !!(state.book && bookmarkAt(visiblePosition())));
+}
+
+function renderBookmarks(list) {
+  list.replaceChildren();
+  if (!state.book) {
+    list.append(el(`<div class="hint">Open a book to see its bookmarks.</div>`));
+    return;
+  }
+  if (!state.bookmarks.length) {
+    list.append(el(`<div class="hint">No bookmarks yet.<br><br>Press <kbd>Ctrl</kbd>+<kbd>D</kbd> or the ribbon button above the text to bookmark the place you are reading.</div>`));
+    return;
+  }
+  const q = state.notesFilter.trim().toLowerCase();
+  for (const b of state.bookmarks) {
+    if (q && !b.label.toLowerCase().includes(q)) continue;
+    const title = state.book.toc[b.position.chapter]?.title || `Chapter ${b.position.chapter + 1}`;
+    const card = el(`<div class="bookmark-card">
+      <div class="where">${esc(title)}</div><div>${esc(b.label || "(empty paragraph)")}</div>
+      <div class="actions"><button class="icon-btn" title="Remove">×</button></div></div>`);
+    card.onclick = async () => {
+      await loadChapter(b.position.chapter, { scroll: "position", paragraph: b.position.paragraph });
+      const p = paragraphEl(b.position.paragraph);
+      if (p) {
+        p.classList.remove("flash");
+        void p.offsetWidth;
+        p.classList.add("flash");
+      }
+      savePosition(b.position);
+    };
+    card.querySelector("button").onclick = async (e) => {
+      e.stopPropagation();
+      await call("bookmark_remove", { id: state.book.entry.id, bookmarkId: b.id });
+      state.bookmarks = state.bookmarks.filter((x) => x.id !== b.id);
+      applyBookmarkMarks();
+      renderNotesPanel();
+    };
+    list.append(card);
+  }
 }
 
 main();

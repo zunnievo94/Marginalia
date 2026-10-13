@@ -9,6 +9,7 @@ mod epub_format;
 pub mod html;
 mod huff;
 mod mobi_format;
+pub mod search;
 pub mod text;
 
 use std::path::Path;
