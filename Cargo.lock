@@ -2536,7 +2536,7 @@ checksum = "fc04a4c58212d57930a24bf47d3fa87485264a3a054e9c10e042eb373573ad3c"
 
 [[package]]
 name = "marginalia-app"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "marginalia-core",
@@ -2551,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "marginalia-cli"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "clap",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "marginalia-core"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "base64 0.22.1",
  "chardetng",
@@ -2578,7 +2578,7 @@ dependencies = [
 
 [[package]]
 name = "marginalia-tts"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "bzip2 0.5.2",
