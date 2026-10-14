@@ -110,8 +110,9 @@ jobs:
       - name: Check the cached sherpa-onnx libraries
         shell: bash
         run: |
-          if ! ls -d target/sherpa-onnx-prebuilt/*/lib >/dev/null 2>&1; then
-            rm -rf target/*/build/sherpa-onnx-sys-* target/*/.fingerprint/sherpa-onnx-sys-* \
+          if ! ls target/sherpa-onnx-prebuilt/*/lib/*sherpa-onnx-c-api* >/dev/null 2>&1; then
+            rm -rf target/sherpa-onnx-prebuilt \
+              target/*/build/sherpa-onnx-sys-* target/*/.fingerprint/sherpa-onnx-sys-* \
               target/*/*/build/sherpa-onnx-sys-* target/*/*/.fingerprint/sherpa-onnx-sys-*
           fi
 
@@ -175,8 +176,9 @@ jobs:
       - name: Check the cached sherpa-onnx libraries
         shell: bash
         run: |
-          if ! ls -d target/sherpa-onnx-prebuilt/*/lib >/dev/null 2>&1; then
-            rm -rf target/*/build/sherpa-onnx-sys-* target/*/.fingerprint/sherpa-onnx-sys-* \
+          if ! ls target/sherpa-onnx-prebuilt/*/lib/*sherpa-onnx-c-api* >/dev/null 2>&1; then
+            rm -rf target/sherpa-onnx-prebuilt \
+              target/*/build/sherpa-onnx-sys-* target/*/.fingerprint/sherpa-onnx-sys-* \
               target/*/*/build/sherpa-onnx-sys-* target/*/*/.fingerprint/sherpa-onnx-sys-*
           fi
       - run: cargo build --release --locked -p marginalia-cli --target ${{ matrix.target }}
