@@ -704,10 +704,88 @@ function renderSettings(root) {
   check("hand_notes", "Handwritten margin notes");
   root.append(el(`<div class="section-header"><span class="grow">Read aloud</span></div>`));
   range("speed", "Speaking speed", 0.5, 2.5, 0.05, (v) => v.toFixed(2) + "×");
+  root.append(el(`<div class="section-header"><span class="grow">Updates</span></div>`));
+  const upd = el(`<div class="setting update"><div class="update-line">Checking version…</div>
+    <button class="btn small" hidden>Check for updates</button></div>`);
+  root.append(upd);
+  renderUpdate(upd);
+  check("check_updates", "Check for updates when Marginalia starts");
   root.append(el(`<div class="hint"><kbd>Ctrl</kbd> <kbd>K</kbd> search or jump · <kbd>Space</kbd> play/pause ·
     <kbd>←</kbd> <kbd>→</kbd> chapters (pages in the book layout) · <kbd>Ctrl</kbd> <kbd>B</kbd> side bar ·
     <kbd>Ctrl</kbd> <kbd>O</kbd> open · <kbd>Ctrl</kbd> <kbd>+</kbd>/<kbd>-</kbd> font size.
     Double-click a sentence to read aloud from there.</div>`));
+}
+
+// ------------------------------------------------------------- updates
+
+// `state.update`: the last check ({enabled, current, version, notes}),
+// `checking` while a check runs and `installing` with its progress.
+async function checkUpdate({ quiet = false } = {}) {
+  state.update = { ...state.update, checking: true, error: null };
+  refreshUpdateView();
+  try {
+    state.update = { ...(await invoke("update_check")), checking: false };
+  } catch (e) {
+    state.update = { ...state.update, checking: false, error: String(e) };
+    if (!quiet) toast("Could not check for updates: " + e, { error: true });
+  }
+  refreshUpdateView();
+  const u = state.update;
+  if (u.version) {
+    toast(`Marginalia ${u.version} is available (you have ${u.current}).`, {
+      timeout: 0,
+      actions: [{ label: "Install and restart", run: installUpdate }],
+    });
+  } else if (!quiet && u.enabled && !u.error) {
+    toast(`Marginalia ${u.current} is the newest version.`);
+  }
+}
+
+async function installUpdate() {
+  state.update = { ...state.update, installing: { done: 0, total: null } };
+  refreshUpdateView();
+  stopSpeech();
+  try {
+    await invoke("update_install"); // restarts the app when it succeeds
+  } catch (e) {
+    state.update.installing = null;
+    refreshUpdateView();
+    toast("Update failed: " + e, { error: true });
+  }
+}
+
+function refreshUpdateView() {
+  const node = document.querySelector(".setting.update");
+  if (node) renderUpdate(node);
+}
+
+function renderUpdate(node) {
+  const u = state.update || {};
+  const line = node.querySelector(".update-line");
+  const btn = node.querySelector("button");
+  btn.hidden = false;
+  btn.disabled = !!(u.checking || u.installing);
+  btn.textContent = "Check for updates";
+  btn.onclick = () => checkUpdate();
+  if (!u.current) {
+    line.textContent = "Checking version…";
+    if (!u.checking) checkUpdate({ quiet: true });
+  } else if (!u.enabled) {
+    line.textContent = `Version ${u.current}. This build does not update itself; new versions are on the releases page.`;
+    btn.hidden = true;
+  } else if (u.installing) {
+    const { done, total } = u.installing;
+    line.textContent = `Downloading ${u.version}… ` + (total ? Math.round((done / total) * 100) + "%" : mb(done));
+    btn.hidden = true;
+  } else if (u.checking) {
+    line.textContent = `Version ${u.current}. Checking…`;
+  } else if (u.version) {
+    line.textContent = `Version ${u.current}. Version ${u.version} is available.`;
+    btn.textContent = "Install and restart";
+    btn.onclick = installUpdate;
+  } else {
+    line.textContent = `Version ${u.current}` + (u.error ? ". The last check failed." : ", the newest.");
+  }
 }
 
 // ------------------------------------------------------------ library
@@ -1683,6 +1761,11 @@ async function main() {
     if (state.view === "voices") renderSidebar();
     renderDownloads();
   });
+  listen("update-progress", (e) => {
+    if (!state.update?.installing) return;
+    state.update.installing = e.payload;
+    refreshUpdateView();
+  });
   listen("tauri://drag-enter", () => document.body.classList.add("dragging"));
   listen("tauri://drag-leave", () => document.body.classList.remove("dragging"));
   listen("tauri://drag-drop", (e) => {
@@ -1706,6 +1789,7 @@ async function main() {
   }
   renderSidebar();
   renderNotesPanel();
+  if (state.settings.check_updates) setTimeout(() => checkUpdate({ quiet: true }), 4000);
   renderStatus();
 }
 

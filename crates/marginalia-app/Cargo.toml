@@ -22,3 +22,4 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 marginalia-core.workspace = true
 marginalia-tts = { workspace = true, features = ["playback"] }
+tauri-plugin-updater = "2"

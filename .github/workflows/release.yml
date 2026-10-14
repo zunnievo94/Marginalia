@@ -70,22 +70,34 @@ jobs:
             assets: >-
               target/release/bundle/appimage/*.AppImage Marginalia-linux-x86_64.AppImage
               target/release/bundle/deb/*.deb Marginalia-linux-amd64.deb
+            # Signed files for in-app updates; only built when signing is set up.
+            updater: >-
+              target/release/bundle/appimage/*.AppImage.sig Marginalia-linux-x86_64.AppImage.sig
+              target/release/bundle/deb/*.deb.sig Marginalia-linux-amd64.deb.sig
           - name: Windows
             os: windows-latest
             args: ""
             assets: >-
               target/release/bundle/nsis/*-setup.exe Marginalia-windows-x64-setup.exe
               target/release/bundle/msi/*.msi Marginalia-windows-x64.msi
+            updater: >-
+              target/release/bundle/nsis/*-setup.exe.sig Marginalia-windows-x64-setup.exe.sig
           - name: macOS Apple Silicon
             os: macos-latest
             args: --target aarch64-apple-darwin
             assets: >-
               target/aarch64-apple-darwin/release/bundle/dmg/*.dmg Marginalia-macos-arm64.dmg
+            updater: >-
+              target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz Marginalia-macos-arm64.app.tar.gz
+              target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig Marginalia-macos-arm64.app.tar.gz.sig
           - name: macOS Intel
             os: macos-latest
             args: --target x86_64-apple-darwin
             assets: >-
               target/x86_64-apple-darwin/release/bundle/dmg/*.dmg Marginalia-macos-x64.dmg
+            updater: >-
+              target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz Marginalia-macos-x64.app.tar.gz
+              target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig Marginalia-macos-x64.app.tar.gz.sig
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -121,9 +133,35 @@ jobs:
         with:
           node-version: 22
 
+      # In-app updates need a signing key: the secrets
+      # TAURI_SIGNING_PRIVATE_KEY (+ _PASSWORD) and the repository variable
+      # TAURI_UPDATER_PUBKEY (see docs/updates.md). Without them the app is
+      # built as before, with no updater.
       - name: Build installers
         working-directory: crates/marginalia-app
-        run: npx --yes @tauri-apps/cli@2 build ${{ matrix.args }}
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+        run: |
+          set -euo pipefail
+          config=()
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$UPDATER_PUBKEY" ]; then
+            node -e '
+              const fs = require("fs");
+              fs.writeFileSync("updater.conf.json", JSON.stringify({
+                bundle: { createUpdaterArtifacts: true },
+                plugins: { updater: {
+                  pubkey: process.env.UPDATER_PUBKEY,
+                  endpoints: [`https://github.com/${process.env.GITHUB_REPOSITORY}/releases/latest/download/latest.json`],
+                } },
+              }));'
+            config=(--config updater.conf.json)
+          else
+            echo "::warning::Update signing is not set up; building without in-app updates."
+          fi
+          npx --yes @tauri-apps/cli@2 build ${{ matrix.args }} ${config[@]+"${config[@]}"}
 
       - name: Upload to the release
         shell: bash
@@ -142,6 +180,76 @@ jobs:
             cp "${files[0]}" "${parts[i+1]}"
             gh release upload "$TAG" "${parts[i+1]}" --clobber
           done
+
+      - name: Upload update files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASSETS: ${{ matrix.updater }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          read -ra parts <<< "$ASSETS"
+          for ((i = 0; i < ${#parts[@]}; i += 2)); do
+            files=( ${parts[i]} )
+            if [ ${#files[@]} -eq 0 ]; then
+              echo "no ${parts[i]} (update signing not set up, or not made for this package)"
+              continue
+            fi
+            cp "${files[0]}" "${parts[i+1]}"
+            gh release upload "$TAG" "${parts[i+1]}" --clobber
+          done
+
+  updates:
+    name: Update manifest
+    needs: app
+    runs-on: ubuntu-latest
+    steps:
+      # latest.json tells installed apps about this release. Each platform is
+      # listed only when its signed update file was built.
+      - name: Write and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir sigs && cd sigs
+          gh release download "$TAG" --pattern '*.sig' || true
+          if ! ls *.sig >/dev/null 2>&1; then
+            echo "::warning::No signed update files; skipping latest.json."
+            exit 0
+          fi
+          node -e '
+            const fs = require("fs");
+            const tag = process.env.TAG;
+            const base = `https://github.com/${process.env.GH_REPO}/releases/download/${tag}/`;
+            // Linux has no plain "linux-x86_64": a .deb must not be offered the AppImage.
+            const targets = {
+              "linux-x86_64-appimage": "Marginalia-linux-x86_64.AppImage",
+              "linux-x86_64-deb": "Marginalia-linux-amd64.deb",
+              "windows-x86_64": "Marginalia-windows-x64-setup.exe",
+              "windows-x86_64-nsis": "Marginalia-windows-x64-setup.exe",
+              "darwin-aarch64": "Marginalia-macos-arm64.app.tar.gz",
+              "darwin-aarch64-app": "Marginalia-macos-arm64.app.tar.gz",
+              "darwin-x86_64": "Marginalia-macos-x64.app.tar.gz",
+              "darwin-x86_64-app": "Marginalia-macos-x64.app.tar.gz",
+            };
+            const platforms = {};
+            for (const [target, file] of Object.entries(targets)) {
+              if (!fs.existsSync(file + ".sig")) continue;
+              platforms[target] = {
+                signature: fs.readFileSync(file + ".sig", "utf8").trim(),
+                url: base + file,
+              };
+            }
+            fs.writeFileSync("latest.json", JSON.stringify({
+              version: tag.replace(/^v/, ""),
+              notes: `See https://github.com/${process.env.GH_REPO}/releases/tag/${tag}`,
+              pub_date: new Date().toISOString(),
+              platforms,
+            }, null, 2));'
+          cat latest.json
+          gh release upload "$TAG" latest.json --clobber
 
   cli:
     name: CLI (${{ matrix.target }})
