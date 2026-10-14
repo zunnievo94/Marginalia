@@ -11,7 +11,11 @@ files that can **read your books aloud** with open-source neural
 text-to-speech. Voice models are downloaded on demand, so nothing big ships
 with the app.
 
-![Marginalia reading a book aloud](docs/screenshot.png)
+![Marginalia: notes written in the margin of Truyện Kiều](docs/screenshot-margin.png)
+
+| Book layout, reading aloud at night | Book map with search matches |
+| --- | --- |
+| ![Two-page spread in the Night theme](docs/screenshot-book.png) | ![The whole book drawn to length, with matches for “Netherfield”](docs/screenshot-map.png) |
 
 > **About this project.** Marginalia is built for its owner's own needs: a
 > reader that opens the formats they use and can read to them. It is not
@@ -60,31 +64,46 @@ Early stage. What works today:
 
 ## Desktop app
 
-A VS Code-style window: chapters on the left, the book on the right, and a
-status bar with the read-aloud controls.
+Chapters on the left, the book on the right, in an ink-and-paper look:
+**Paper**, **Night** and **Sepia** themes, Literata for books and Be Vietnam
+Pro for the interface (both bundled, with full Vietnamese support; Chinese
+uses the system's CJK fonts). Three layouts, switched from the toolbar:
+
+- **Margin** (default): notes are written in the margin beside the passage
+  they annotate, along a red margin rule, in a handwriting font if you like.
+- **Book**: a two-page spread with running heads, page numbers and a drop
+  cap; <kbd>←</kbd>/<kbd>→</kbd>, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> or the
+  mouse wheel turn pages, across chapters.
+- **Workbench**: VS Code style, with a tab per open book, the notes panel
+  and a status bar.
 
 - **Library**: open books (or drop files onto the window); covers and
   reading progress are remembered.
-- **Reader**: dark / light / sepia themes, font, size, spacing and column
-  width; reopens where you stopped.
+- **Contents**: each chapter shows how long it takes to listen to and how
+  much of it you have read. The **book map** draws the whole book, one bar
+  per chapter to scale, with search matches, notes, bookmarks and your
+  position on it; click anywhere to jump there.
 - **Read aloud**: press <kbd>Space</kbd> or double-click a sentence; the
-  sentence being spoken is highlighted and followed, across chapters.
-- **Notes**: select any passage (even across paragraphs) and press
-  **✎ Note**, or click the **+** in the margin to annotate a whole
-  paragraph. Notes are highlighted in one of four colors, marked in the
-  margin, listed in a panel on the right (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>)
-  and can be exported to Markdown.
-- **Search**: <kbd>Ctrl</kbd>+<kbd>F</kbd> searches the whole book, ignoring
-  case and accents (“thung lung” finds “thung lũng”); results are grouped by
-  chapter and highlighted in the text, <kbd>Enter</kbd>/<kbd>F3</kbd> steps
-  through them.
+  sentence being spoken is highlighted and followed, across chapters and
+  pages. The player under the text shows the sentence, the place in the
+  chapter and the time left, steps sentence by sentence and changes speed.
+- **Notes**: select any passage (even across paragraphs) to **Add note**,
+  **Highlight**, **Read from here** or **Copy**, or click the **+** left of a
+  paragraph to annotate all of it. Notes come in four colors, are listed in
+  a panel on the right (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>) and can
+  be exported to Markdown.
+- **Search and jump**: <kbd>Ctrl</kbd>+<kbd>K</kbd> jumps to a chapter, runs
+  a command (layout, theme…) or searches; <kbd>Ctrl</kbd>+<kbd>F</kbd>
+  searches the whole book, ignoring case and accents (“thung lung” finds
+  “thung lũng”); <kbd>Enter</kbd>/<kbd>F3</kbd> steps through the matches.
 - **Bookmarks**: <kbd>Ctrl</kbd>+<kbd>D</kbd> (or the ribbon button) marks the
   paragraph you are reading; bookmarks are listed next to the notes.
 - **Voices**: pick a voice per language (Vietnamese books keep a Vietnamese
   voice, English books an English one), choose a speaker, listen to a sample,
   and download or remove models with progress bars.
 
-Shortcuts: <kbd>Space</kbd> play/pause, <kbd>←</kbd>/<kbd>→</kbd> chapters,
+Shortcuts: <kbd>Ctrl</kbd>+<kbd>K</kbd> search or jump, <kbd>Space</kbd> play/pause,
+<kbd>←</kbd>/<kbd>→</kbd> chapters (pages in the book layout),
 <kbd>Ctrl</kbd>+<kbd>F</kbd> search, <kbd>Ctrl</kbd>+<kbd>D</kbd> bookmark,
 <kbd>Ctrl</kbd>+<kbd>B</kbd> sidebar, <kbd>Ctrl</kbd>+<kbd>O</kbd> open,
 <kbd>Ctrl</kbd>+<kbd>+</kbd>/<kbd>-</kbd> font size, <kbd>Esc</kbd> stop.

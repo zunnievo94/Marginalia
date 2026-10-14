@@ -114,8 +114,15 @@ impl Library {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// `dark`, `light` or `sepia`.
+    /// `paper`, `night` or `sepia`.
     pub theme: String,
+    /// Reading layout: `margin` (notes beside the text), `workbench`
+    /// (tabs, notes panel and status bar) or `book` (two-page spread).
+    pub layout: String,
+    /// Chapters view: `list` or `map` (the whole book drawn to length).
+    pub toc_mode: String,
+    /// Margin notes in a handwriting font.
+    pub hand_notes: bool,
     /// `serif` or `sans`.
     pub font: String,
     pub font_size: u32,
@@ -142,7 +149,10 @@ pub struct VoicePref {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            theme: "dark".into(),
+            theme: "paper".into(),
+            layout: "margin".into(),
+            toc_mode: "list".into(),
+            hand_notes: true,
             font: "serif".into(),
             font_size: 19,
             line_height: 1.7,
@@ -158,7 +168,14 @@ impl Default for Settings {
 
 impl Settings {
     pub fn load() -> Settings {
-        load("settings.json")
+        let mut s: Settings = load("settings.json");
+        // Themes before 0.0.4 were VS Code's dark and light.
+        s.theme = match s.theme.as_str() {
+            "dark" => "night".into(),
+            "light" => "paper".into(),
+            _ => s.theme,
+        };
+        s
     }
 
     pub fn save(&self) -> Result<()> {
