@@ -6,8 +6,8 @@
 is a page whose margin note is a sound wave: a book you can annotate and
 listen to.
 
-An open-source desktop ebook reader for **EPUB** and **MOBI / PRC / AZW**
-files that can **read your books aloud** with open-source neural
+An open-source desktop ebook reader for **EPUB**, **MOBI / PRC / AZW**,
+**FB2**, **TXT**, **Markdown** and **PDF** (text) files that can **read your books aloud** with open-source neural
 text-to-speech. Voice models are downloaded on demand, so nothing big ships
 with the app.
 
@@ -51,6 +51,11 @@ Early stage. What works today:
 | MOBI / PRC / AZW | ✅ uncompressed, PalmDOC and HUFF/CDIC compression, EXTH metadata, UTF-8 and CP1252 |
 | KF8 / AZW3 | ✅ chapters rebuilt from the skeleton/fragment indexes and titled from the NCX; `kindle:embed` images; hybrid MOBI+KF8 files |
 | Plain PalmDOC (`.pdb`, old `.prc`) | ✅ plain-text and HTML content |
+| FB2 (`.fb2`, `.fb2.zip`, `.fbz`) | ✅ metadata, nested sections as chapters, emphasis, poems and epigraphs, embedded images and cover, notes |
+| TXT | ✅ UTF-8, UTF-16 and legacy encodings (GBK, Big5, windows-125x…) detected; chapters split at headings such as “Chương 1”, “第一章”, “Chapter 1” |
+| Markdown | ✅ one chapter per top heading; bold, italic, tables |
+| PDF | ✅ the text layer, reflowed into paragraphs, 10 pages per chapter; scanned PDFs (pictures of pages) cannot be read |
+| Styling | ✅ bold, italic, underline, strikethrough, super/subscript, code, headings, block quotes and tables |
 | DRM-protected books | ❌ refused with a clear error (DRM-free books only) |
 | Text-to-speech | ✅ runs inside the app with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): 89 Piper voices (~40 languages), Kokoro (natural English and Mandarin), Supertonic 3 (31 languages), [VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS) v3 Turbo and Nano (natural Vietnamese, no Python needed); models downloaded on demand |
 | TTS fallback | ✅ a system `espeak-ng` when no voice model is installed |
@@ -200,7 +205,9 @@ crates/
   marginalia-core   Book model + parsers. EPUB via the `epub` crate; MOBI/PRC
                     (Palm database, PalmDOC LZ77, HUFF/CDIC, EXTH) and KF8
                     (INDX/TAGX indexes, skeleton/fragment, NCX) implemented
-                    here. HTML becomes paragraphs and images; text is split
+                    here, as are FB2, TXT and Markdown; PDF text via
+                    `pdf-extract`. HTML becomes paragraphs (with their
+                    bold/italic spans), images and tables; text is split
                     into sentences for speech; accent-insensitive search.
   marginalia-tts    Voice model catalog + downloader (sherpa-onnx GitHub
                     releases, Hugging Face), in-process synthesis with
@@ -267,8 +274,9 @@ pure CLI better than a cross-platform reading app with audio.
 - [x] Full KF8 (AZW3) structure: chapter splitting from the NCX index
 - [x] A more natural Vietnamese voice: VieNeu-TTS v3, without Python
 - [x] Images and covers
-- [ ] Basic book styling (bold/italic, tables)
-- [ ] FB2, TXT and (maybe) PDF text
+- [x] Basic book styling (bold/italic, tables)
+- [x] FB2, TXT, Markdown and PDF text
+- [x] Find and replace words in a book
 
 ## Licenses
 

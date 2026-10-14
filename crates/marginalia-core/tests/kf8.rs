@@ -32,7 +32,7 @@ fn kf8_images_and_cover() {
             .iter()
             .filter_map(|b| match b {
                 Block::Image { image, .. } => Some(*image),
-                Block::Text(_) => None,
+                Block::Text(_) | Block::Table(_) => None,
             })
             .collect();
         assert_eq!(images.len(), 1, "{file}: one inline picture");

@@ -635,6 +635,19 @@ body.notes-open #btn-notes { background: var(--panel-2); color: var(--text); }
   text-wrap: balance;
 }
 .reading figure { margin: 1.4em 0; text-align: center; }
+.reading p.h1, .reading p.h2 { font-size: 1.6em; }
+.reading p.h3 { font-size: 1.3em; }
+.reading p.h4, .reading p.h5, .reading p.h6 { font-size: 1.1em; }
+.reading p.heading:not(:first-of-type) { margin-top: 1.6em; }
+.reading p.quote { margin-left: 2em; margin-right: 1em; color: var(--text-2); font-style: italic; }
+.reading p.quote em { font-style: normal; }
+.reading strong { font-weight: 650; }
+.reading code { font-family: ui-monospace, "Cascadia Mono", Menlo, monospace; font-size: 0.88em; background: var(--panel); border-radius: 4px; padding: 0.05em 0.3em; }
+.reading sup, .reading sub { line-height: 0; font-size: 0.72em; }
+.reading figure.table { overflow-x: auto; text-align: left; break-inside: avoid; }
+.reading table { border-collapse: collapse; font-size: 0.88em; line-height: 1.45; min-width: 50%; font-variant-numeric: tabular-nums; }
+.reading th, .reading td { padding: 0.45em 0.8em; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.reading th { font-family: var(--ui-font); font-size: 0.86em; font-weight: 600; color: var(--muted); border-bottom-color: var(--border-strong); }
 .reading figure img {
   max-width: 100%;
   max-height: 85vh;

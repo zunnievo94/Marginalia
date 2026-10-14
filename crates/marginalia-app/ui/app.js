@@ -10,6 +10,7 @@ const $ = (sel) => document.querySelector(sel);
 const CJK_END = /[　-ヿ㐀-鿿豈-﫿＀-￯]["'”’」』）)]*$/;
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 const QUICK_SPEEDS = [0.75, 1, 1.25, 1.5, 2];
+const BOOK_FILE = /\.(epub|mobi|prc|azw3?|pdb|fb2|fbz|fb2\.zip|txt|md|markdown|pdf)$/i;
 const LAYOUTS = ["margin", "book", "workbench"];
 const THEMES = [["paper", "Paper"], ["night", "Night"], ["sepia", "Sepia"]];
 const VIEW_TITLES = {
@@ -413,7 +414,7 @@ function renderLibrary(root) {
   b.onclick = pickBooks;
   root.append(b);
   if (!state.library.length) {
-    root.append(el(`<div class="hint">Your library is empty. Open EPUB, MOBI, PRC or AZW files, or drop them onto the window.</div>`));
+    root.append(el(`<div class="hint">Your library is empty. Open EPUB, MOBI, AZW, FB2, TXT, Markdown or PDF files, or drop them onto the window.</div>`));
     return;
   }
   root.append(el(`<div class="section-header"><span class="grow">Books</span><span class="badge">${state.library.length}</span></div>`));
@@ -877,6 +878,10 @@ function renderContent() {
   let pi = -1; // index among text paragraphs (what positions and speech use)
   let first = true;
   state.blocks.forEach((block) => {
+    if (block.kind === "table") {
+      reading.append(renderTable(block));
+      return;
+    }
     if (block.kind === "image") {
       const fig = el(`<figure><img alt="${esc(block.alt)}" title="${esc(block.alt)}"></figure>`);
       const img = fig.querySelector("img");
@@ -888,14 +893,18 @@ function renderContent() {
       return;
     }
     const sentences = block.sentences;
+    const style = block.style;
     pi += 1;
     const p = document.createElement("p");
     p.dataset.p = pi;
-    if (pi === 0 && norm(sentences.join(" ")) === norm(title)) p.className = "heading";
-    else if (first) {
+    if (style?.heading || (pi === 0 && norm(sentences.join(" ")) === norm(title))) {
+      p.className = "heading";
+      if (style?.heading) p.classList.add("h" + style.heading);
+    } else if (first && !style?.quote) {
       p.className = "first";
       first = false;
     }
+    if (style?.quote) p.classList.add("quote");
     p.append(el(`<span class="gutter add" title="Add a note to this paragraph">${icon("plus")}</span>`));
     sentences.forEach((s, si) => {
       // Chinese/Japanese sentences are not separated by spaces.
@@ -906,6 +915,7 @@ function renderContent() {
       span.textContent = s;
       p.append(span);
     });
+    for (const [kind, start, end] of style?.spans || []) wrapRange(p, start, end, INLINE_TAGS[kind] || "span");
     reading.append(p);
   });
   if (!state.blocks.length) reading.append(el(`<p class="hint">This chapter is empty.</p>`));
@@ -948,10 +958,49 @@ function renderContent() {
   if (state.speaking?.chapter === state.chapter) highlight(state.speaking, false);
 }
 
+const INLINE_TAGS = { b: "strong", i: "em", u: "u", s: "s", sup: "sup", sub: "sub", code: "code" };
+
+// Wrap characters [start, end) of a paragraph's text in <tag> elements,
+// one per text node it crosses, so sentence spans stay intact.
+function wrapRange(p, start, end, tag) {
+  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+  const pieces = [];
+  let pos = 0;
+  for (let n = walker.nextNode(); n && pos < end; n = walker.nextNode()) {
+    const a = Math.max(start, pos);
+    const b = Math.min(end, pos + n.length);
+    if (a < b) pieces.push([n, a - pos, b - pos]);
+    pos += n.length;
+  }
+  for (const [n, a, b] of pieces) {
+    let node = n;
+    if (b < node.length) node.splitText(b);
+    if (a > 0) node = node.splitText(a);
+    const w = document.createElement(tag);
+    node.replaceWith(w);
+    w.append(node);
+  }
+}
+
+function renderTable(block) {
+  const fig = el(`<figure class="table"><table></table></figure>`);
+  const table = fig.querySelector("table");
+  block.rows.forEach((row, i) => {
+    const tr = document.createElement("tr");
+    for (const cell of row) {
+      const td = document.createElement(block.header && i === 0 ? "th" : "td");
+      td.textContent = cell;
+      tr.append(td);
+    }
+    table.append(tr);
+  });
+  return fig;
+}
+
 function renderWelcome() {
   const w = el(`<div class="welcome">
     <div class="brand"><img src="logo.svg" alt=""><h1>Marginalia</h1></div>
-    <div class="sub">Read, annotate and listen to EPUB, MOBI and PRC books.</div>
+    <div class="sub">Read, annotate and listen to EPUB, MOBI, FB2, TXT, Markdown and PDF books.</div>
     <div class="cols">
       <div>
         <h2>Start</h2>
@@ -1636,9 +1685,9 @@ async function main() {
   listen("tauri://drag-leave", () => document.body.classList.remove("dragging"));
   listen("tauri://drag-drop", (e) => {
     document.body.classList.remove("dragging");
-    const paths = (e.payload.paths || []).filter((p) => /\.(epub|mobi|prc|azw3?|pdb)$/i.test(p));
+    const paths = (e.payload.paths || []).filter((p) => BOOK_FILE.test(p));
     if (paths.length) addPaths(paths);
-    else toast("Only EPUB, MOBI, PRC, AZW and PDB files can be opened.", { error: true });
+    else toast("Marginalia opens EPUB, MOBI, AZW, PRC, FB2, TXT, Markdown and PDF files.", { error: true });
   });
 
   // Reopen the last book where it was left.
