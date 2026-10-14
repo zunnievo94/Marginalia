@@ -1390,6 +1390,43 @@ body.hand-notes #note-editor textarea { font: 18px/1.3 var(--hand); }
 :root[data-theme="night"] .map-legend .l-here { background: var(--text); }
 .map-tip { color: var(--muted); font-size: 12px; padding: 0 20px 8px; }
 
+/* --------------------------------------------------------------- replace */
+
+.rule {
+  margin: 0 12px 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--ground);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rule.off { opacity: 0.55; }
+.rule .line { display: flex; align-items: center; gap: 6px; }
+.rule input[type="text"] { height: 30px; flex: 1; min-width: 0; }
+.rule .from { font-family: var(--serif); font-size: 14px; }
+.rule .to { font-family: var(--serif); font-size: 14px; }
+.rule input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); flex: none; margin: 0 4px; }
+.rule .arrow { width: 24px; display: grid; place-items: center; color: var(--accent); flex: none; }
+.rule .arrow .i { width: 15px; height: 15px; }
+.rule .seg { padding: 2px; }
+.rule .seg button { min-width: 28px; height: 26px; font-family: var(--serif); font-size: 13px; }
+.rule .seg button[aria-pressed="true"] { background: var(--panel-2); color: var(--accent); font-weight: 600; }
+.add-rule { margin: 0 12px 6px; }
+.add-rule .i { width: 14px; height: 14px; }
+.replace-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  margin-top: 10px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+.replace-bar .btn { flex: 1; }
+
 /* ------------------------------------------------------------- bookmarks */
 
 .reading p.bookmarked::before {

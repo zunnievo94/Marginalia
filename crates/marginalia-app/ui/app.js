@@ -49,6 +49,7 @@ const state = {
   pendingAnchor: null, // anchor of the current text selection
   book2: { spread: 0, spreads: 1, step: 1 }, // two-page layout
   palette: { items: [], active: 0 },
+  replace: { book: [], all: [], dirty: false }, // find-and-replace rules
 };
 
 // ------------------------------------------------------------- helpers
@@ -743,6 +744,8 @@ async function openBook(id) {
   if (!state.openBooks.includes(id)) state.openBooks.push(id);
   state.notes = await invoke("notes_list", { id }).catch(() => []);
   state.bookmarks = await invoke("bookmarks_list", { id }).catch(() => []);
+  const rules = await invoke("replacements_get", { id }).catch(() => ({ book: [], all: [] }));
+  state.replace = { book: rules.book, all: rules.all, dirty: false };
   state.search = { query: "", hits: [], truncated: false, active: -1 };
   state.notesFilter = "";
   closeNoteEditor();
@@ -1414,6 +1417,7 @@ function paletteItems(q) {
     ...THEMES.map(([t, name]) => ({ label: `Theme: ${name}`, icon: "settings", run: () => setTheme(t) })),
     { label: "Book map", icon: "map", run: () => { updateSetting("toc_mode", "map"); setViewIfHidden("chapters"); } },
     { label: "Notes and bookmarks panel", icon: "note", run: toggleNotesPanel },
+    { label: "Replace text in this book", icon: "replace", run: () => openReplace() },
     { label: "Bookmark this place", icon: "bookmark", run: toggleBookmark },
     { label: "Open a book…", icon: "plus", run: pickBooks },
     { label: "Library", icon: "library", run: () => setViewIfHidden("library") },
@@ -1913,7 +1917,11 @@ function renderNotesPanel(activeIds = []) {
   });
   $("#notes-export").hidden = state.panelTab !== "notes";
   $("#notes-export").disabled = !state.notes.length;
+  $("#notes-filter-box").hidden = state.panelTab === "replace";
+  const active = state.replace.book.filter((r) => r.enabled).length + state.replace.all.filter((r) => r.enabled).length;
+  $("#replace-count").textContent = active || "";
   if (state.panelTab === "bookmarks") return renderBookmarks(list);
+  if (state.panelTab === "replace") return renderReplace(list);
   list.replaceChildren();
   if (!state.book) {
     list.append(el(`<div class="hint">Open a book to see its notes.</div>`));
@@ -2023,6 +2031,12 @@ function wireNotes() {
         openNoteEditor({ id: "", anchor, text: "", color: "amber" });
         return;
       }
+      if (act === "replace") {
+        tools.hidden = true;
+        window.getSelection().removeAllRanges();
+        openReplace(anchor.quote.trim().split(/\s+/).join(" "));
+        return;
+      }
       tools.hidden = true;
       if (act === "highlight") {
         window.getSelection().removeAllRanges();
@@ -2088,6 +2102,124 @@ function wireNotes() {
     const path = await call("notes_export", { id: state.book.entry.id });
     if (path) toast("Notes exported to " + path);
   };
+}
+
+// -------------------------------------------------------------- replace
+
+// Find-and-replace rules change what is shown, searched and read aloud;
+// the book file is never modified.
+function newRule(find = "") {
+  return { find, replace: "", whole_word: true, match_case: false, enabled: true };
+}
+
+function openReplace(find) {
+  if (!state.book) return;
+  state.panelTab = "replace";
+  if (find) {
+    if (find.length > 200) find = find.slice(0, 200);
+    state.replace.book.push(newRule(find));
+    state.replace.dirty = true;
+  }
+  setNotesOpen(true);
+  renderNotesPanel();
+  const inputs = document.querySelectorAll('#notes-list .rule[data-list="book"] .to');
+  if (find && inputs.length) inputs[inputs.length - 1]?.focus();
+}
+
+function renderReplace(list) {
+  list.replaceChildren();
+  if (!state.book) {
+    list.append(el(`<div class="hint">Open a book to replace words in it.</div>`));
+    return;
+  }
+  list.append(el(`<div class="hint">Change a word or name everywhere: in what you read, search and hear.
+    The book file is not modified, and longer phrases win over shorter ones.</div>`));
+  const section = (key, title) => {
+    const rules = state.replace[key];
+    list.append(el(`<div class="note-group">${esc(title)}</div>`));
+    rules.forEach((r, i) => list.append(ruleRow(rules, r, i)));
+    const add = el(`<button class="btn small quiet add-rule">${icon("plus")}Add rule</button>`);
+    add.onclick = () => {
+      rules.push(newRule());
+      state.replace.dirty = true;
+      renderNotesPanel();
+      const rows = list.querySelectorAll(`.rule[data-list="${key}"] .from`);
+      rows[rows.length - 1]?.focus();
+    };
+    list.append(add);
+  };
+  section("book", "This book");
+  section("all", "All books");
+  const bar = el(`<div class="replace-bar">
+    <button class="btn" data-act="apply">${icon("check")}Apply</button>
+    <button class="btn quiet" data-act="revert">Revert</button></div>`);
+  bar.querySelector('[data-act="apply"]').disabled = !state.replace.dirty;
+  bar.querySelector('[data-act="revert"]').disabled = !state.replace.dirty;
+  bar.querySelector('[data-act="apply"]').onclick = applyReplacements;
+  bar.querySelector('[data-act="revert"]').onclick = async () => {
+    const rules = await invoke("replacements_get", { id: state.book.entry.id });
+    state.replace = { book: rules.book, all: rules.all, dirty: false };
+    renderNotesPanel();
+  };
+  list.append(bar);
+}
+
+function ruleRow(rules, r, i) {
+  const key = rules === state.replace.book ? "book" : "all";
+  const row = el(`<div class="rule${r.enabled ? "" : " off"}" data-list="${key}">
+    <div class="line">
+      <input type="checkbox" aria-label="Use this rule"${r.enabled ? " checked" : ""}>
+      <input type="text" class="from" placeholder="Find" aria-label="Find" spellcheck="false">
+      <button class="icon-btn small" aria-label="Delete rule" title="Delete">${icon("close")}</button>
+    </div>
+    <div class="line">
+      <span class="arrow" aria-hidden="true">${icon("right")}</span>
+      <input type="text" class="to" placeholder="Replace with (empty removes it)" aria-label="Replace with" spellcheck="false">
+      <span class="seg" role="group" aria-label="Options">
+        <button aria-pressed="${r.match_case}" title="Match case" aria-label="Match case">Aa</button>
+        <button aria-pressed="${r.whole_word}" title="Whole word only" aria-label="Whole word only"><u>ab</u></button>
+      </span>
+    </div></div>`);
+  const [enabled, from, del] = row.querySelectorAll(".line:first-child > *");
+  const to = row.querySelector(".to");
+  from.value = r.find;
+  to.value = r.replace;
+  const dirty = () => {
+    state.replace.dirty = true;
+    document.querySelectorAll(".replace-bar .btn").forEach((b) => { b.disabled = false; });
+  };
+  enabled.onchange = () => { r.enabled = enabled.checked; row.classList.toggle("off", !r.enabled); dirty(); };
+  from.oninput = () => { r.find = from.value; dirty(); };
+  to.oninput = () => { r.replace = to.value; dirty(); };
+  for (const input of [from, to]) {
+    input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); applyReplacements(); } };
+  }
+  del.onclick = () => { rules.splice(i, 1); dirty(); renderNotesPanel(); };
+  const [caseBtn, wordBtn] = row.querySelectorAll(".seg button");
+  caseBtn.onclick = () => { r.match_case = !r.match_case; caseBtn.setAttribute("aria-pressed", r.match_case); dirty(); };
+  wordBtn.onclick = () => { r.whole_word = !r.whole_word; wordBtn.setAttribute("aria-pressed", r.whole_word); dirty(); };
+  return row;
+}
+
+async function applyReplacements() {
+  if (!state.book) return;
+  const clean = (rules) => rules.filter((r) => r.find.trim());
+  const rules = { book: clean(state.replace.book), all: clean(state.replace.all) };
+  const id = state.book.entry.id;
+  await call("replacements_set", { id, rules });
+  state.replace = { ...rules, dirty: false };
+  // The text changed: reload the book where the reader is.
+  stopSpeech();
+  const pos = visiblePosition();
+  const view = await call("book_open", { id });
+  state.book.toc = view.toc;
+  state.chapter = -1;
+  await loadChapter(pos.chapter, { scroll: "position", paragraph: pos.paragraph });
+  if (state.search.query.trim()) runSearch();
+  renderSidebar();
+  renderNotesPanel();
+  const n = rules.book.filter((r) => r.enabled).length + rules.all.filter((r) => r.enabled).length;
+  toast(n ? `${n} replacement rule${n === 1 ? "" : "s"} in use.` : "No replacements in use.", { timeout: 2500 });
 }
 
 // --------------------------------------------------------------- search

@@ -2425,6 +2425,7 @@ dependencies = [
  "encoding_rs",
  "epub",
  "html-escape",
+ "regex",
  "thiserror 2.0.21",
  "unicode-normalization",
  "zip 2.4.2",
