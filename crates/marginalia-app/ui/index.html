@@ -38,6 +38,7 @@
     <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6c-2-1.5-5-2-8-1.5V19c3-.5 6 0 8 1.5 2-1.5 5-2 8-1.5V4.5c-3-.5-6 0-8 1.5zM12 6v14.5"/></symbol>
     <symbol id="i-margin" viewBox="0 0 24 24"><path d="M4 6h9M4 10h9M4 14h9M4 18h6"/><path d="M16 4v16" /><path d="M18.5 8h1.5"/></symbol>
     <symbol id="i-panels" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M8.5 4.5v15M15.5 4.5v15"/></symbol>
+    <symbol id="i-replace" viewBox="0 0 24 24"><path d="M4 8h12l-3-3M20 16H8l3 3"/></symbol>
     <symbol id="i-command" viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="12" rx="2"/><path d="M7 10h1M11 10h2M16 10h1M8 14h8"/></symbol>
   </svg>
 
@@ -103,11 +104,12 @@
       <header class="panel-title" role="tablist">
         <button class="panel-tab" role="tab" data-tab="notes">Notes <span class="count" id="notes-count">0</span></button>
         <button class="panel-tab" role="tab" data-tab="bookmarks">Bookmarks <span class="count" id="bookmarks-count">0</span></button>
+        <button class="panel-tab" role="tab" data-tab="replace">Replace <span class="count" id="replace-count"></span></button>
         <span class="grow"></span>
         <button class="icon-btn" id="notes-export" aria-label="Export notes as Markdown" title="Export notes as Markdown"><svg class="i"><use href="#i-export"/></svg></button>
         <button class="icon-btn" id="notes-close" aria-label="Close panel" title="Close"><svg class="i"><use href="#i-close"/></svg></button>
       </header>
-      <div class="filter"><input type="search" id="notes-filter" placeholder="Filter" aria-label="Filter notes"></div>
+      <div class="filter" id="notes-filter-box"><input type="search" id="notes-filter" placeholder="Filter" aria-label="Filter notes"></div>
       <div id="notes-list"></div>
     </aside>
   </div>
@@ -132,6 +134,7 @@
     <button data-act="note"><svg class="i"><use href="#i-note"/></svg>Add note</button>
     <button data-act="highlight"><svg class="i"><use href="#i-marker"/></svg>Highlight</button>
     <button data-act="read"><svg class="i"><use href="#i-play"/></svg>Read from here</button>
+    <button data-act="replace"><svg class="i"><use href="#i-replace"/></svg>Replace…</button>
     <button data-act="copy"><svg class="i"><use href="#i-copy"/></svg>Copy</button>
   </div>
 

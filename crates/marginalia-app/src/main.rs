@@ -5,6 +5,7 @@
 
 mod bookmarks;
 mod notes;
+mod replacements;
 mod speech;
 mod store;
 
@@ -50,7 +51,9 @@ impl AppState {
             .get(id)
             .map(|e| e.path.clone())
             .ok_or("This book is no longer in the library.")?;
-        let book = Arc::new(marginalia_core::open(&path).map_err(err)?);
+        let mut book = marginalia_core::open(&path).map_err(err)?;
+        replacements::replacer(id).apply_to_book(&mut book);
+        let book = Arc::new(book);
         *open = Some((id.to_string(), book.clone()));
         Ok(book)
     }
@@ -384,6 +387,23 @@ fn bookmark_add(id: String, position: Position, label: String) -> CmdResult<book
 }
 
 #[tauri::command]
+fn replacements_get(id: String) -> replacements::Rules {
+    replacements::load(&id)
+}
+
+/// Save the rules and reload the book with them on its next use.
+#[tauri::command]
+fn replacements_set(
+    state: State<AppState>,
+    id: String,
+    rules: replacements::Rules,
+) -> CmdResult<()> {
+    replacements::save(&id, &rules).map_err(err)?;
+    *state.open.lock().unwrap() = None;
+    Ok(())
+}
+
+#[tauri::command]
 fn bookmark_remove(id: String, bookmark_id: String) -> CmdResult<()> {
     bookmarks::remove(&id, &bookmark_id).map_err(err)
 }
@@ -597,6 +617,8 @@ fn main() {
             bookmarks_list,
             bookmark_add,
             bookmark_remove,
+            replacements_get,
+            replacements_set,
             notes_list,
             note_save,
             note_delete,

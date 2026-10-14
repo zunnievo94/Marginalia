@@ -96,6 +96,12 @@ uses the system's CJK fonts). Three layouts, switched from the toolbar:
   a command (layout, theme…) or searches; <kbd>Ctrl</kbd>+<kbd>F</kbd>
   searches the whole book, ignoring case and accents (“thung lung” finds
   “thung lũng”); <kbd>Enter</kbd>/<kbd>F3</kbd> steps through the matches.
+- **Replace**: rename a character or fix how a word is read, everywhere
+  in a book or in every book (“Trương Cao Thiên” → “Trương Cao Trời”,
+  “TP.HCM” → “thành phố Hồ Chí Minh”). Select a word and choose
+  **Replace…**, or open the Replace tab next to the notes. Rules change
+  what is shown, searched and read aloud, never the book file; longer
+  phrases win over shorter ones, with options for whole words and case.
 - **Bookmarks**: <kbd>Ctrl</kbd>+<kbd>D</kbd> (or the ribbon button) marks the
   paragraph you are reading; bookmarks are listed next to the notes.
 - **Voices**: pick a voice per language (Vietnamese books keep a Vietnamese
