@@ -61,17 +61,46 @@ impl Replacer {
     }
 
     pub fn apply(&self, text: &str) -> String {
+        self.apply_mapped(text).0
+    }
+
+    fn replacement(&self, caps: &Captures) -> &str {
+        (1..caps.len())
+            .find(|&i| caps.get(i).is_some())
+            .map_or("", |i| &self.replacements[i - 1])
+    }
+
+    /// Replace, and return how character offsets move: for each match,
+    /// (old start, old end, new start, new end) in characters.
+    fn apply_mapped(&self, text: &str) -> (String, Vec<[usize; 4]>) {
         let Some(regex) = &self.regex else {
-            return text.to_string();
+            return (text.to_string(), Vec::new());
         };
-        regex
-            .replace_all(text, |caps: &Captures| {
-                (1..caps.len())
-                    .find(|&i| caps.get(i).is_some())
-                    .map(|i| self.replacements[i - 1].clone())
-                    .unwrap_or_default()
-            })
-            .into_owned()
+        let mut out = String::with_capacity(text.len());
+        let mut moves = Vec::new();
+        let (mut last, mut old_chars, mut new_chars) = (0usize, 0usize, 0usize);
+        for caps in regex.captures_iter(text) {
+            let m = caps.get(0).expect("whole match");
+            let between = &text[last..m.start()];
+            out.push_str(between);
+            let n = between.chars().count();
+            old_chars += n;
+            new_chars += n;
+            let rep = self.replacement(&caps);
+            out.push_str(rep);
+            let (old_len, new_len) = (m.as_str().chars().count(), rep.chars().count());
+            moves.push([
+                old_chars,
+                old_chars + old_len,
+                new_chars,
+                new_chars + new_len,
+            ]);
+            old_chars += old_len;
+            new_chars += new_len;
+            last = m.end();
+        }
+        out.push_str(&text[last..]);
+        (out, moves)
     }
 
     /// Number of matches in `text`.
@@ -87,13 +116,50 @@ impl Replacer {
         for chapter in &mut book.chapters {
             chapter.title = self.apply(&chapter.title);
             chapter.text = self.apply(&chapter.text);
+            let mut paragraph = 0;
             for block in &mut chapter.blocks {
                 match block {
-                    Block::Text(t) => *t = self.apply(t),
+                    Block::Text(t) => {
+                        let (new, moves) = self.apply_mapped(t);
+                        *t = new;
+                        if let Some(style) = chapter.styles.get_mut(paragraph) {
+                            for span in &mut style.spans {
+                                span.start = moved(&moves, span.start, true);
+                                span.end = moved(&moves, span.end, false);
+                            }
+                            style.spans.retain(|s| s.start < s.end);
+                        }
+                        paragraph += 1;
+                    }
                     Block::Image { alt, .. } => *alt = self.apply(alt),
+                    Block::Table(table) => {
+                        for cell in table.rows.iter_mut().flatten() {
+                            *cell = self.apply(cell);
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+/// Where character offset `at` lands after the replacements in `moves`.
+/// An offset inside a replaced stretch moves to its start (for a span's
+/// start) or its end (for a span's end), so the styling covers it.
+fn moved(moves: &[[usize; 4]], at: usize, start: bool) -> usize {
+    let Some(&[os, oe, ns, ne]) = moves.iter().rev().find(|m| m[0] <= at) else {
+        return at;
+    };
+    if at == os {
+        ns
+    } else if at < oe {
+        if start {
+            ns
+        } else {
+            ne
+        }
+    } else {
+        ne + (at - oe)
     }
 }
 
@@ -142,6 +208,42 @@ mod tests {
         ]);
         assert_eq!(r.apply("Ở TP.HCM (?)"), "Ở thành phố Hồ Chí Minh ");
         assert_eq!(r.apply("TPxHCM"), "TPxHCM");
+    }
+
+    #[test]
+    fn styles_follow_replacements() {
+        use crate::{Chapter, Inline, ParaStyle, Span};
+        let mut book = crate::Book {
+            format: crate::Format::Epub,
+            metadata: Default::default(),
+            chapters: vec![Chapter::from_text("c".into(), "Thiên nói với Lan.".into())],
+            images: Vec::new(),
+            cover: None,
+        };
+        // "Lan" is italic: characters 14..17.
+        book.chapters[0].styles = vec![ParaStyle {
+            spans: vec![Span {
+                kind: Inline::Italic,
+                start: 14,
+                end: 17,
+            }],
+            ..Default::default()
+        }];
+        Replacer::new(&[rule("Thiên", "Trương Cao Trời", true, true)]).apply_to_book(&mut book);
+        let Block::Text(t) = &book.chapters[0].blocks[0] else {
+            panic!()
+        };
+        let s = book.chapters[0].styles[0].spans[0];
+        let italic: String = t.chars().skip(s.start).take(s.end - s.start).collect();
+        assert_eq!(italic, "Lan");
+        // A styled word that is itself replaced stays styled.
+        Replacer::new(&[rule("Lan", "Ngọc Lan", true, true)]).apply_to_book(&mut book);
+        let Block::Text(t) = &book.chapters[0].blocks[0] else {
+            panic!()
+        };
+        let s = book.chapters[0].styles[0].spans[0];
+        let italic: String = t.chars().skip(s.start).take(s.end - s.start).collect();
+        assert_eq!(italic, "Ngọc Lan");
     }
 
     #[test]

@@ -30,13 +30,15 @@ jobs:
         with:
           cache-directories: target/sherpa-onnx-prebuilt
       # sherpa-onnx-sys downloads its libraries into target/sherpa-onnx-prebuilt.
-      # A partly restored cache can hold its build-script output without
-      # them; then rebuild it so the libraries are downloaded again.
+      # A partly restored cache can hold its build-script output, or even the
+      # lib directory, without the libraries themselves; then drop both so
+      # the build script downloads them again.
       - name: Check the cached sherpa-onnx libraries
         shell: bash
         run: |
-          if ! ls -d target/sherpa-onnx-prebuilt/*/lib >/dev/null 2>&1; then
-            rm -rf target/*/build/sherpa-onnx-sys-* target/*/.fingerprint/sherpa-onnx-sys-* \
+          if ! ls target/sherpa-onnx-prebuilt/*/lib/*sherpa-onnx-c-api* >/dev/null 2>&1; then
+            rm -rf target/sherpa-onnx-prebuilt \
+              target/*/build/sherpa-onnx-sys-* target/*/.fingerprint/sherpa-onnx-sys-* \
               target/*/*/build/sherpa-onnx-sys-* target/*/*/.fingerprint/sherpa-onnx-sys-*
           fi
       - run: cargo fmt --all --check

@@ -12,8 +12,11 @@ epub = "2.1"
 encoding_rs = "0.8"
 html-escape = "0.2"
 regex = "1"
+base64 = "0.22"
+chardetng = "1"
+pdf-extract = "0.12"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 thiserror.workspace = true
 unicode-normalization = "0.1"
 
-[dev-dependencies]
-zip = { version = "2", default-features = false, features = ["deflate"] }

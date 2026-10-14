@@ -84,6 +84,32 @@ pub fn display_paragraph(sentences: &[String]) -> String {
     out
 }
 
+/// Map character offsets in a paragraph to offsets in its
+/// [`display_paragraph`] form, which collapses whitespace, joins sentences
+/// and may drop stray punctuation. Entry `i` is where the paragraph's
+/// character `i` lands (the last entry is the end of the text).
+pub fn display_offsets(paragraph: &str, display: &str) -> Vec<usize> {
+    let p: Vec<char> = paragraph.chars().collect();
+    let d: Vec<char> = display.chars().collect();
+    let mut map = Vec::with_capacity(p.len() + 1);
+    let mut j = 0;
+    for &c in &p {
+        if !c.is_whitespace() {
+            // A space the display added between sentences.
+            if d.get(j).is_some_and(|x| x.is_whitespace()) && d.get(j + 1) == Some(&c) {
+                j += 1;
+            }
+        }
+        map.push(j);
+        match d.get(j) {
+            Some(&x) if x == c || (x.is_whitespace() && c.is_whitespace()) => j += 1,
+            _ => {} // collapsed whitespace or a dropped character
+        }
+    }
+    map.push(j);
+    map
+}
+
 /// Sentences of one paragraph, or the paragraph itself if it has none.
 pub fn sentences_or_whole(paragraph: &str) -> Vec<String> {
     let s = sentences(paragraph);
@@ -250,5 +276,32 @@ mod tests {
         let chunks = speech_chunks(&long, 50);
         assert!(chunks.iter().all(|c| c.chars().count() <= 50));
         assert_eq!(chunks.join(" ").split_whitespace().count(), 100);
+    }
+
+    #[test]
+    fn display_offsets_follow_collapsed_text() {
+        let p = "Một  ngày.\nHai câu!";
+        let d = display_paragraph(&sentences_or_whole(p));
+        assert_eq!(d, "Một ngày. Hai câu!");
+        let map = display_offsets(p, &d);
+        let pc: Vec<char> = p.chars().collect();
+        let dc: Vec<char> = d.chars().collect();
+        // "ngày" and "câu" keep their place.
+        let at = |w: &str| {
+            pc.iter()
+                .collect::<String>()
+                .find(w)
+                .map(|b| p[..b].chars().count())
+                .unwrap()
+        };
+        for w in ["ngày", "Hai", "câu"] {
+            let s = map[at(w)];
+            assert_eq!(dc[s..s + w.chars().count()].iter().collect::<String>(), w);
+        }
+        assert_eq!(*map.last().unwrap(), dc.len());
+        // CJK sentences are joined without a space.
+        let p = "你好。再見。";
+        let d = display_paragraph(&sentences_or_whole(p));
+        assert_eq!(display_offsets(p, &d)[3], 3);
     }
 }

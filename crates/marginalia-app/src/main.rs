@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use marginalia_core::text::sentences_or_whole;
-use marginalia_core::{Block, Book};
+use marginalia_core::{Block, Book, ParaStyle};
 use marginalia_tts::models;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -99,7 +99,10 @@ fn library_add(state: State<AppState>, paths: Vec<PathBuf>) -> CmdResult<AddResu
                     title,
                     authors: book.metadata.authors.clone(),
                     language: book.metadata.language.clone(),
-                    format: format!("{:?}", book.format).to_uppercase(),
+                    format: match book.format {
+                        marginalia_core::Format::Markdown => "MD".into(),
+                        f => format!("{f:?}").to_uppercase(),
+                    },
                     chapters: book.chapters.len(),
                     added: store::now(),
                     last_opened: None,
@@ -128,7 +131,13 @@ async fn library_pick(app: AppHandle, state: State<'_, AppState>) -> CmdResult<A
         .dialog()
         .file()
         .set_title("Open books")
-        .add_filter("Ebooks", &["epub", "mobi", "prc", "azw", "azw3", "pdb"])
+        .add_filter(
+            "Books",
+            &[
+                "epub", "mobi", "prc", "azw", "azw3", "pdb", "fb2", "fbz", "zip", "txt", "md",
+                "markdown", "pdf",
+            ],
+        )
         .blocking_pick_files()
         .unwrap_or_default();
     let paths = picked
@@ -196,25 +205,75 @@ fn book_open(state: State<AppState>, id: String) -> CmdResult<BookView> {
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum BlockView {
     /// A paragraph split into sentences, the units read aloud.
-    Text { sentences: Vec<String> },
+    Text {
+        sentences: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        style: Option<StyleView>,
+    },
     /// An image, served at `mgimg://localhost/<book id>/<image>`.
     Image { image: usize, alt: String },
+    /// A table, shown but not read aloud.
+    Table {
+        rows: Vec<Vec<String>>,
+        header: bool,
+    },
+}
+
+/// Paragraph styling, with spans in character offsets into the text as
+/// displayed (the sentences joined).
+#[derive(Serialize)]
+struct StyleView {
+    heading: u8,
+    quote: bool,
+    /// (style, start, end): `b`, `i`, `u`, `s`, `sup`, `sub` or `code`.
+    spans: Vec<(&'static str, usize, usize)>,
+}
+
+fn style_view(paragraph: &str, sentences: &[String], style: &ParaStyle) -> StyleView {
+    let spans = if style.spans.is_empty() {
+        Vec::new()
+    } else {
+        let display = marginalia_core::text::display_paragraph(sentences);
+        let map = marginalia_core::text::display_offsets(paragraph, &display);
+        let at = |i: usize| map[i.min(map.len() - 1)];
+        style
+            .spans
+            .iter()
+            .map(|s| (s.kind.name(), at(s.start), at(s.end)))
+            .filter(|(_, a, b)| a < b)
+            .collect()
+    };
+    StyleView {
+        heading: style.heading,
+        quote: style.quote,
+        spans,
+    }
 }
 
 #[tauri::command]
 fn chapter_get(state: State<AppState>, id: String, index: usize) -> CmdResult<Vec<BlockView>> {
     let book = state.book(&id)?;
     let chapter = book.chapters.get(index).ok_or("chapter out of range")?;
+    let mut paragraph = 0;
     Ok(chapter
         .blocks
         .iter()
         .map(|b| match b {
-            Block::Text(t) => BlockView::Text {
-                sentences: sentences_or_whole(t),
-            },
+            Block::Text(t) => {
+                let sentences = sentences_or_whole(t);
+                let style = chapter
+                    .style(paragraph)
+                    .map(|st| style_view(t, &sentences, st));
+                paragraph += 1;
+                BlockView::Text { sentences, style }
+            }
             Block::Image { image, alt } => BlockView::Image {
                 image: *image,
                 alt: alt.clone(),
+            },
+            Block::Table(t) => BlockView::Table {
+                rows: t.rows.clone(),
+                header: t.header,
             },
         })
         .collect())

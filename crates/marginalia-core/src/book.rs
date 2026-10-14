@@ -7,13 +7,30 @@ pub enum Format {
     Mobi,
     /// Plain PalmDOC (`.pdb`, older `.prc`) without a MOBI header.
     PalmDoc,
+    /// FictionBook 2 (`.fb2`, or zipped as `.fb2.zip` / `.fbz`).
+    Fb2,
+    /// Plain text (`.txt`).
+    Txt,
+    /// Markdown (`.md`).
+    Markdown,
+    /// PDF, as extracted text.
+    Pdf,
 }
 
 impl Format {
-    /// Sniff the format from the first bytes of a file.
+    /// Sniff the format from the first bytes of a file. Plain text and
+    /// Markdown have no signature; [`crate::open`] tells them apart by the
+    /// file name.
     pub fn detect(bytes: &[u8]) -> Option<Format> {
         if bytes.starts_with(b"PK\x03\x04") {
             return Some(Format::Epub);
+        }
+        if bytes.starts_with(b"%PDF-") {
+            return Some(Format::Pdf);
+        }
+        let head = String::from_utf8_lossy(&bytes[..bytes.len().min(2048)]);
+        if head.contains("<FictionBook") {
+            return Some(Format::Fb2);
         }
         // Palm database: type + creator live at offset 60..68.
         match bytes.get(60..68)? {
@@ -39,6 +56,78 @@ pub enum Block {
     Text(String),
     /// An image, by index into [`Book::images`].
     Image { image: usize, alt: String },
+    /// A table. Its text is not part of [`Chapter::text`], so it is shown
+    /// but not read aloud or searched.
+    Table(Table),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Table {
+    pub rows: Vec<Vec<String>>,
+    /// The first row holds column headings.
+    pub header: bool,
+}
+
+/// An inline text style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Inline {
+    Bold,
+    Italic,
+    Underline,
+    Strike,
+    Sup,
+    Sub,
+    Code,
+}
+
+impl Inline {
+    pub const COUNT: usize = 7;
+    pub const ALL: [Inline; Inline::COUNT] = [
+        Inline::Bold,
+        Inline::Italic,
+        Inline::Underline,
+        Inline::Strike,
+        Inline::Sup,
+        Inline::Sub,
+        Inline::Code,
+    ];
+
+    /// Short name: `b`, `i`, `u`, `s`, `sup`, `sub` or `code`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Inline::Bold => "b",
+            Inline::Italic => "i",
+            Inline::Underline => "u",
+            Inline::Strike => "s",
+            Inline::Sup => "sup",
+            Inline::Sub => "sub",
+            Inline::Code => "code",
+        }
+    }
+}
+
+/// A styled stretch of a paragraph, in character offsets into its text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub kind: Inline,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// How a paragraph is styled.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParaStyle {
+    /// Heading level 1–6, or 0 for body text.
+    pub heading: u8,
+    /// Inside a block quote (also used for epigraphs and poems).
+    pub quote: bool,
+    pub spans: Vec<Span>,
+}
+
+impl ParaStyle {
+    pub fn is_plain(&self) -> bool {
+        self.heading == 0 && !self.quote && self.spans.is_empty()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,8 +155,10 @@ pub struct Chapter {
     pub title: String,
     /// Readable plain text; paragraphs are separated by blank lines.
     pub text: String,
-    /// Paragraphs and images in reading order.
+    /// Paragraphs, images and tables in reading order.
     pub blocks: Vec<Block>,
+    /// Styling of the n-th text block; missing entries are plain.
+    pub styles: Vec<ParaStyle>,
 }
 
 impl Chapter {
@@ -83,7 +174,13 @@ impl Chapter {
             title,
             text,
             blocks,
+            styles: Vec::new(),
         }
+    }
+
+    /// Style of the n-th text block.
+    pub fn style(&self, paragraph: usize) -> Option<&ParaStyle> {
+        self.styles.get(paragraph).filter(|s| !s.is_plain())
     }
 
     /// Build a chapter from converted HTML, resolving image references to
@@ -101,12 +198,14 @@ impl Chapter {
                 crate::html::RawBlock::Image { src, alt } => {
                     resolve(&src).map(|image| Block::Image { image, alt })
                 }
+                crate::html::RawBlock::Table(t) => Some(Block::Table(t)),
             })
             .collect();
         Chapter {
             title,
             text: converted.text,
             blocks,
+            styles: converted.styles,
         }
     }
 

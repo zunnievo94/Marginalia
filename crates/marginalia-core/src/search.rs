@@ -71,7 +71,7 @@ pub fn search(book: &Book, query: &str, limit: usize) -> Vec<Hit> {
     for (ci, chapter) in book.chapters.iter().enumerate() {
         let texts = chapter.blocks.iter().filter_map(|b| match b {
             Block::Text(t) => Some(t),
-            Block::Image { .. } => None,
+            Block::Image { .. } | Block::Table(_) => None,
         });
         for (pi, text) in texts.enumerate() {
             let display = display_paragraph(&sentences_or_whole(text));
