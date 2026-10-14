@@ -29,7 +29,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cat > notes.md <<'NOTES'
-          Early test build of Marginalia, an EPUB/MOBI/PRC reader that can read books aloud.
+          Early test build of Marginalia, a reader for EPUB, MOBI/AZW, FB2, TXT,
+          Markdown and PDF books that can read them aloud.
 
           **Downloads**
           - **Windows**: `Marginalia-windows-x64-setup.exe` (or the `.msi`)
