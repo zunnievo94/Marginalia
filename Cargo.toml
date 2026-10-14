@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/marginalia-core", "crates/marginalia-tts", "crates/marginalia-cli", "crates/marginalia-app"]
 
 [workspace.package]
-version = "0.0.6"
+version = "0.0.7"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/zunnievo94/Marginalia"
