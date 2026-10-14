@@ -151,6 +151,8 @@ fn library_remove(state: State<AppState>, id: String) -> CmdResult<()> {
 struct TocItem {
     title: String,
     words: usize,
+    /// Text paragraphs, as counted by reading positions.
+    paragraphs: usize,
     images: bool,
 }
 
@@ -176,6 +178,11 @@ fn book_open(state: State<AppState>, id: String) -> CmdResult<BookView> {
         .map(|c| TocItem {
             title: c.title.clone(),
             words: marginalia_core::text::word_count(&c.text),
+            paragraphs: c
+                .blocks
+                .iter()
+                .filter(|b| matches!(b, Block::Text(_)))
+                .count(),
             images: c.has_images(),
         })
         .collect();

@@ -21,6 +21,7 @@ components below; all of their licenses are compatible with the GPL-3.0.
 | [piper-phonemize](https://github.com/rhasspy/piper-phonemize) | phonemizer (via sherpa-onnx) | MIT |
 | kaldi-native-fbank, kaldi-decoder, kaldifst, OpenFst, SentencePiece | parts of sherpa-onnx | Apache-2.0 |
 | KISS FFT | part of sherpa-onnx | BSD-3-Clause |
+| [Be Vietnam Pro](https://github.com/bettergui/BeVietnamPro), [Literata](https://github.com/googlefonts/literata), [Patrick Hand](https://fonts.google.com/specimen/Patrick+Hand) | interface, book and handwritten-note fonts (subset to Latin and Vietnamese; license texts in `ui/fonts/`) | OFL-1.1 |
 | [Tauri](https://tauri.app) | desktop app framework | MIT OR Apache-2.0 |
 | [rodio](https://github.com/RustAudio/rodio) / cpal | audio output | MIT OR Apache-2.0 |
 | cssparser, selectors (via Tauri) | HTML/CSS handling | MPL-2.0 |

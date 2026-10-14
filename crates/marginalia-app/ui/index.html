@@ -1,99 +1,163 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="paper">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Marginalia</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="layout-margin">
+  <!-- Icons: one stroke family, referenced with <use href="#i-name">. -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <symbol id="i-toc" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></symbol>
+    <symbol id="i-library" viewBox="0 0 24 24"><path d="M5 4v16M9.5 4v16M14 4.5l4.5 15"/></symbol>
+    <symbol id="i-voices" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4" height="6" rx="1.5"/><rect x="16.5" y="14" width="4" height="6" rx="1.5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3.5L7 20z"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z"/><path d="M9 12h6M9 16h4"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="13.5" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><path d="M6 6v12"/><path d="M18 6l-8 6 8 6z"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="M18 6v12"/><path d="M6 6l8 6-8 6z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M15 5l4 4L9 19H5v-4z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 15V6a1 1 0 0 1 1-1h9"/></symbol>
+    <symbol id="i-marker" viewBox="0 0 24 24"><path d="M14 4l6 6-8 8H6v-6z"/><path d="M4 20h7"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="M4 6h9M4 10h14M4 14h6M4 18h11"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M20 16l-5-5-8 8"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 4l2.4 5 5.4.6-4 3.7 1.1 5.4L12 16l-4.9 2.7 1.1-5.4-4-3.7 5.4-.6z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6c-2-1.5-5-2-8-1.5V19c3-.5 6 0 8 1.5 2-1.5 5-2 8-1.5V4.5c-3-.5-6 0-8 1.5zM12 6v14.5"/></symbol>
+    <symbol id="i-margin" viewBox="0 0 24 24"><path d="M4 6h9M4 10h9M4 14h9M4 18h6"/><path d="M16 4v16" /><path d="M18.5 8h1.5"/></symbol>
+    <symbol id="i-panels" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M8.5 4.5v15M15.5 4.5v15"/></symbol>
+    <symbol id="i-command" viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="12" rx="2"/><path d="M7 10h1M11 10h2M16 10h1M8 14h8"/></symbol>
+  </svg>
+
   <div id="workbench">
     <nav id="activitybar" aria-label="Views">
-      <button class="activity" data-view="chapters" title="Chapters (Ctrl+1)">
-        <svg viewBox="0 0 24 24"><path d="M4 6h2v2H4zm4 0h12v2H8zM4 11h2v2H4zm4 0h12v2H8zm-4 5h2v2H4zm4 0h12v2H8z"/></svg>
-      </button>
-      <button class="activity" data-view="search" title="Search in book (Ctrl+F)">
-        <svg viewBox="0 0 24 24"><path d="M10 3a7 7 0 0 1 5.6 11.2l5.1 5.1-1.4 1.4-5.1-5.1A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg>
-      </button>
-      <button class="activity" data-view="library" title="Library (Ctrl+2)">
-        <svg viewBox="0 0 24 24"><path d="M4 4h4v16H4zm5 0h4v16H9zm5.2 1.1 3.9-1 4 15.5-3.9 1z"/></svg>
-      </button>
-      <button class="activity" data-view="voices" title="Voices (Ctrl+3)">
-        <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9v6a3 3 0 0 0 3 3h2v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h2a3 3 0 0 0 3-3v-6a9 9 0 0 0-9-9z"/></svg>
-      </button>
+      <img class="mark" src="logo.svg" alt="" width="28" height="28">
+      <button class="activity" data-view="chapters" aria-label="Contents" title="Contents (Ctrl+1)"><svg class="i"><use href="#i-toc"/></svg></button>
+      <button class="activity" data-view="search" aria-label="Search in book" title="Search in book (Ctrl+F)"><svg class="i"><use href="#i-search"/></svg></button>
+      <button class="activity" data-view="library" aria-label="Library" title="Library (Ctrl+2)"><svg class="i"><use href="#i-library"/></svg></button>
+      <button class="activity" data-view="voices" aria-label="Voices" title="Voices (Ctrl+3)"><svg class="i"><use href="#i-voices"/></svg><span class="dot" hidden></span></button>
       <div class="spacer"></div>
-      <button class="activity" data-view="settings" title="Settings (Ctrl+,)">
-        <svg viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L4.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
-      </button>
+      <button class="activity" data-view="settings" aria-label="Settings" title="Settings (Ctrl+,)"><svg class="i"><use href="#i-settings"/></svg></button>
     </nav>
 
-    <aside id="sidebar">
+    <aside id="sidebar" aria-label="Side bar">
       <header id="sidebar-title"></header>
       <div id="sidebar-content"></div>
     </aside>
     <div id="sash" title="Drag to resize"></div>
 
     <main id="editor">
-      <div id="tabs"></div>
-      <div id="breadcrumbs">
-        <span id="crumbs"></span>
+      <div id="tabs" role="tablist" aria-label="Open books"></div>
+      <div id="toolbar">
+        <nav id="crumbs" aria-label="Breadcrumb"></nav>
+        <button id="btn-palette" title="Search the book or jump to a chapter (Ctrl+K)">
+          <svg class="i"><use href="#i-search"/></svg><span>Search or jump to…</span><kbd>Ctrl K</kbd>
+        </button>
         <span class="grow"></span>
-        <button class="icon-btn" id="btn-prev" title="Previous chapter (←)">‹</button>
-        <button class="icon-btn" id="btn-next" title="Next chapter (→)">›</button>
-        <button class="icon-btn" id="btn-bookmark" title="Bookmark this place (Ctrl+D)">
-          <svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4zm2 2v12.3l4-2.7 4 2.7V5z"/></svg>
-        </button>
-        <button class="icon-btn" id="btn-notes" title="Toggle notes panel (Ctrl+Shift+M)">
-          <svg viewBox="0 0 24 24"><path d="M4 3h12l4 4v14H4zm2 2v14h12V8h-3V5zm2 5h8v2H8zm0 4h8v2H8z"/></svg>
-        </button>
+        <button class="icon-btn" id="btn-prev" aria-label="Previous chapter" title="Previous chapter"><svg class="i"><use href="#i-left"/></svg></button>
+        <button class="icon-btn" id="btn-next" aria-label="Next chapter" title="Next chapter"><svg class="i"><use href="#i-right"/></svg></button>
+        <span class="sep" aria-hidden="true"></span>
+        <div class="seg" id="layout-switch" role="radiogroup" aria-label="Layout">
+          <button role="radio" data-layout="margin" aria-label="Margin layout" title="Margin: notes beside the text"><svg class="i"><use href="#i-margin"/></svg></button>
+          <button role="radio" data-layout="book" aria-label="Book layout" title="Book: two-page spread"><svg class="i"><use href="#i-book"/></svg></button>
+          <button role="radio" data-layout="workbench" aria-label="Workbench layout" title="Workbench: tabs, notes panel, status bar"><svg class="i"><use href="#i-panels"/></svg></button>
+        </div>
+        <button class="icon-btn" id="btn-bookmark" aria-label="Bookmark this place" title="Bookmark this place (Ctrl+D)"><svg class="i"><use href="#i-bookmark"/></svg></button>
+        <button class="icon-btn" id="btn-notes" aria-label="Notes panel" title="Notes and bookmarks (Ctrl+Shift+M)"><svg class="i"><use href="#i-note"/></svg><span class="count" id="notes-badge"></span></button>
       </div>
       <div id="content" tabindex="0"></div>
+
+      <div id="player" role="region" aria-label="Read aloud">
+        <div class="transport">
+          <button class="round" id="pl-prev" aria-label="Previous sentence" title="Previous sentence"><svg class="i"><use href="#i-prev"/></svg></button>
+          <button class="round big" id="pl-play" aria-label="Read aloud" title="Read aloud (Space)"><svg class="i"><use href="#i-play"/></svg></button>
+          <button class="round" id="pl-next" aria-label="Next sentence" title="Next sentence"><svg class="i"><use href="#i-next"/></svg></button>
+          <button class="round" id="pl-stop" aria-label="Stop" title="Stop (Esc)"><svg class="i"><use href="#i-stop"/></svg></button>
+        </div>
+        <div class="now">
+          <p class="line" id="pl-line"></p>
+          <div class="track-row">
+            <span id="pl-where"></span>
+            <div class="track" id="pl-track" role="slider" tabindex="0" aria-label="Position in chapter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="fill"></div><div class="knob"></div></div>
+            <span id="pl-left"></span>
+          </div>
+        </div>
+        <div class="seg" id="pl-speed" role="radiogroup" aria-label="Speed"></div>
+        <button class="voice-btn" id="pl-voice" title="Choose a voice"><svg class="i"><use href="#i-voices"/></svg><span></span></button>
+      </div>
     </main>
 
-    <aside id="notes-panel" aria-label="Notes">
-      <header class="panel-title">
-        <button class="panel-tab" data-tab="notes">Notes <span class="badge" id="notes-count">0</span></button>
-        <button class="panel-tab" data-tab="bookmarks">Bookmarks <span class="badge" id="bookmarks-count">0</span></button>
+    <aside id="notes-panel" aria-label="Notes and bookmarks">
+      <header class="panel-title" role="tablist">
+        <button class="panel-tab" role="tab" data-tab="notes">Notes <span class="count" id="notes-count">0</span></button>
+        <button class="panel-tab" role="tab" data-tab="bookmarks">Bookmarks <span class="count" id="bookmarks-count">0</span></button>
         <span class="grow"></span>
-        <button class="icon-btn" id="notes-export" title="Export notes as Markdown">⤓</button>
-        <button class="icon-btn" id="notes-close" title="Close">×</button>
+        <button class="icon-btn" id="notes-export" aria-label="Export notes as Markdown" title="Export notes as Markdown"><svg class="i"><use href="#i-export"/></svg></button>
+        <button class="icon-btn" id="notes-close" aria-label="Close panel" title="Close"><svg class="i"><use href="#i-close"/></svg></button>
       </header>
-      <div class="filter"><input type="search" id="notes-filter" placeholder="Filter"></div>
+      <div class="filter"><input type="search" id="notes-filter" placeholder="Filter" aria-label="Filter notes"></div>
       <div id="notes-list"></div>
     </aside>
   </div>
 
   <footer id="statusbar">
     <div class="left">
-      <span class="item" id="st-book"></span>
+      <button class="item" id="st-book" title="Library"></button>
       <span class="item" id="st-chapter"></span>
       <span class="item" id="st-progress"></span>
       <button class="item" id="st-notes" title="Notes (Ctrl+Shift+M)"></button>
     </div>
     <div class="right">
-      <span class="item" id="st-voice" title="Voice"></span>
+      <span class="item" id="st-download" role="status"></span>
+      <button class="item" id="st-voice" title="Voices"></button>
       <button class="item" id="st-speed" title="Speaking speed">1.0×</button>
-      <button class="item" id="st-stop" title="Stop">■</button>
-      <button class="item" id="st-play" title="Read aloud (Space)">▶ Read aloud</button>
+      <button class="item" id="st-stop" aria-label="Stop" title="Stop"><svg class="i"><use href="#i-stop"/></svg></button>
+      <button class="item" id="st-play" title="Read aloud (Space)"></button>
     </div>
   </footer>
 
-  <button id="sel-note" hidden>✎ Note</button>
-  <div id="note-editor" hidden>
+  <div id="sel-tools" role="toolbar" aria-label="Selection" hidden>
+    <button data-act="note"><svg class="i"><use href="#i-note"/></svg>Add note</button>
+    <button data-act="highlight"><svg class="i"><use href="#i-marker"/></svg>Highlight</button>
+    <button data-act="read"><svg class="i"><use href="#i-play"/></svg>Read from here</button>
+    <button data-act="copy"><svg class="i"><use href="#i-copy"/></svg>Copy</button>
+  </div>
+
+  <div id="note-editor" role="dialog" aria-label="Note" hidden>
     <div class="quote"></div>
-    <textarea placeholder="Write a note…  (Ctrl+Enter to save, Esc to cancel)"></textarea>
+    <textarea aria-label="Note text" placeholder="Write a note…  (Ctrl+Enter to save, Esc to cancel)"></textarea>
     <div class="row">
-      <span class="colors">
-        <button data-color="amber" title="Amber"></button><button data-color="green" title="Green"></button><button data-color="blue" title="Blue"></button><button data-color="rose" title="Rose"></button>
+      <span class="colors" role="radiogroup" aria-label="Color">
+        <button data-color="amber" aria-label="Amber" title="Amber"></button><button data-color="green" aria-label="Green" title="Green"></button><button data-color="blue" aria-label="Blue" title="Blue"></button><button data-color="rose" aria-label="Rose" title="Rose"></button>
       </span>
       <span class="grow"></span>
-      <button class="btn small secondary" data-act="delete">Delete</button>
-      <button class="btn small secondary" data-act="cancel">Cancel</button>
+      <button class="btn small quiet" data-act="delete">Delete</button>
+      <button class="btn small quiet" data-act="cancel">Cancel</button>
       <button class="btn small" data-act="save">Save</button>
     </div>
   </div>
 
-  <div id="toasts"></div>
+  <div id="palette" role="dialog" aria-label="Search or jump" hidden>
+    <div class="box">
+      <svg class="i"><use href="#i-search"/></svg>
+      <input type="text" id="palette-input" placeholder="Search the book, jump to a chapter, or run a command" autocomplete="off" spellcheck="false" aria-label="Search or jump">
+    </div>
+    <div id="palette-list" role="listbox"></div>
+  </div>
+
+  <div id="toasts" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>
 </html>
