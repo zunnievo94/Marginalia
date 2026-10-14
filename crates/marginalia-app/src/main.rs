@@ -462,6 +462,113 @@ fn replacements_set(
     Ok(())
 }
 
+#[derive(Serialize)]
+struct Imported {
+    rules: replacements::Rules,
+    imported: usize,
+}
+
+/// Add rules from a text file to this book's (`scope` = "book") or every
+/// book's ("all") list.
+#[tauri::command]
+async fn replacements_import(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    scope: String,
+) -> CmdResult<Option<Imported>> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("Import replacements")
+        .add_filter("Rule list", &["txt", "csv", "tsv"])
+        .blocking_pick_file()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let text = marginalia_core::decode_text(&std::fs::read(&path).map_err(err)?);
+    let new = replacements::parse_list(&text);
+    if new.is_empty() {
+        return Err("No rules found. Write one per line, as find=replace.".into());
+    }
+    let mut rules = replacements::load(&id);
+    let list = if scope == "all" {
+        &mut rules.all
+    } else {
+        &mut rules.book
+    };
+    let imported = replacements::merge(list, new);
+    replacements::save(&id, &rules).map_err(err)?;
+    *state.open.lock().unwrap() = None;
+    Ok(Some(Imported { rules, imported }))
+}
+
+#[tauri::command]
+async fn replacements_export(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    scope: String,
+) -> CmdResult<Option<String>> {
+    let rules = replacements::load(&id);
+    let (list, name) = if scope == "all" {
+        (&rules.all, "All books".to_string())
+    } else {
+        let title = state
+            .library
+            .lock()
+            .unwrap()
+            .get(&id)
+            .map(|e| e.title.clone())
+            .unwrap_or_default();
+        (&rules.book, title)
+    };
+    let file_name: String = format!("{name} - replacements.txt")
+        .chars()
+        .map(|c| if "/\\:*?\"<>|".contains(c) { '_' } else { c })
+        .collect();
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("Export replacements")
+        .set_file_name(&file_name)
+        .add_filter("Rule list", &["txt"])
+        .blocking_save_file()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    std::fs::write(&path, replacements::to_list(&name, list)).map_err(err)?;
+    Ok(Some(path.display().to_string()))
+}
+
+#[derive(Serialize)]
+struct NameGroupView {
+    key: String,
+    total: usize,
+    names: Vec<(String, usize)>,
+}
+
+/// Proper names used in the book (after replacements), grouped by their
+/// first word so different translations of one name sit together.
+#[tauri::command]
+async fn book_names(state: State<'_, AppState>, id: String) -> CmdResult<Vec<NameGroupView>> {
+    let book = state.book(&id)?;
+    let groups =
+        tauri::async_runtime::spawn_blocking(move || marginalia_core::names::names(&book, 2, 400))
+            .await
+            .map_err(err)?;
+    Ok(groups
+        .into_iter()
+        .map(|g| NameGroupView {
+            key: g.key,
+            total: g.total,
+            names: g.names.into_iter().map(|n| (n.name, n.count)).collect(),
+        })
+        .collect())
+}
+
 #[tauri::command]
 fn bookmark_remove(id: String, bookmark_id: String) -> CmdResult<()> {
     bookmarks::remove(&id, &bookmark_id).map_err(err)
@@ -678,6 +785,9 @@ fn main() {
             bookmark_remove,
             replacements_get,
             replacements_set,
+            replacements_import,
+            replacements_export,
+            book_names,
             notes_list,
             note_save,
             note_delete,
