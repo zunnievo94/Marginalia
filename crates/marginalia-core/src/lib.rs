@@ -12,6 +12,7 @@ mod huff;
 mod kf8;
 mod markdown_format;
 mod mobi_format;
+pub mod names;
 mod pdf_format;
 pub mod replace;
 pub mod search;
@@ -83,6 +84,12 @@ pub fn open_named(bytes: &[u8], name: Option<&str>) -> Result<Book> {
         }
         _ => Err(Error::UnsupportedFormat),
     }
+}
+
+/// Decode a text file in any common encoding (BOM, UTF-8, or a guess
+/// such as GBK, Big5 or windows-1258).
+pub fn decode_text(bytes: &[u8]) -> String {
+    txt_format::decode(bytes)
 }
 
 /// A title from a file name: without the extension, underscores as spaces.

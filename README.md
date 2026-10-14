@@ -107,6 +107,12 @@ uses the system's CJK fonts). Three layouts, switched from the toolbar:
   **Replace…**, or open the Replace tab next to the notes. Rules change
   what is shown, searched and read aloud, never the book file; longer
   phrases win over shorter ones, with options for whole words and case.
+  Rule lists can be imported and exported as text files, one
+  `find=replace` per line.
+- **Names in this book**: the names a book uses most, grouped by their
+  first word, so a character translated several ways (common in
+  machine-translated novels) shows its variants side by side; one click
+  maps a rare variant onto the usual one.
 - **Bookmarks**: <kbd>Ctrl</kbd>+<kbd>D</kbd> (or the ribbon button) marks the
   paragraph you are reading; bookmarks are listed next to the notes.
 - **Voices**: pick a voice per language (Vietnamese books keep a Vietnamese

@@ -105,3 +105,82 @@ pub fn replacer(book_id: &str) -> Replacer {
         .collect();
     Replacer::new(&active)
 }
+
+/// Read a rule list: one `find=replace` per line (`→`, `=>` or a tab also
+/// separate them). Empty lines and lines starting with `#` or `//` are
+/// skipped.
+pub fn parse_list(text: &str) -> Vec<Rule> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("//"))
+        .filter_map(|l| {
+            let (find, replace) = ["=>", "→", "=", "\t"]
+                .iter()
+                .find_map(|sep| l.split_once(sep))?;
+            let find = find.trim();
+            (!find.is_empty()).then(|| Rule {
+                find: find.to_string(),
+                replace: replace.trim().to_string(),
+                whole_word: true,
+                match_case: false,
+                enabled: true,
+            })
+        })
+        .collect()
+}
+
+/// Add `new` rules to `rules`; a rule for the same text replaces the old one.
+pub fn merge(rules: &mut Vec<Rule>, new: Vec<Rule>) -> usize {
+    let n = new.len();
+    for rule in new {
+        match rules.iter_mut().find(|r| r.find.trim() == rule.find.trim()) {
+            Some(old) => old.replace = rule.replace,
+            None => rules.push(rule),
+        }
+    }
+    n
+}
+
+/// Write rules as a list `parse_list` reads back.
+pub fn to_list(title: &str, rules: &[Rule]) -> String {
+    let mut out =
+        format!("# Marginalia replacements: {title}\n# One rule per line: find=replace\n\n");
+    for r in rules {
+        if !r.enabled {
+            out.push_str("# (off) ");
+        }
+        out.push_str(&format!("{}={}\n", r.find.trim(), r.replace.trim()));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_and_writes_lists() {
+        let rules = parse_list("# names\nTrương Cao Thiên=Trương Cao Trời\n\nTP.HCM => thành phố Hồ Chí Minh\nA→B\nx\ty\nno separator\n");
+        let pairs: Vec<(&str, &str)> = rules
+            .iter()
+            .map(|r| (r.find.as_str(), r.replace.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("Trương Cao Thiên", "Trương Cao Trời"),
+                ("TP.HCM", "thành phố Hồ Chí Minh"),
+                ("A", "B"),
+                ("x", "y")
+            ]
+        );
+        let mut list = vec![rules[0].clone()];
+        merge(
+            &mut list,
+            parse_list("Trương Cao Thiên=Trương Tam\nLâm=Lam"),
+        );
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].replace, "Trương Tam");
+        assert_eq!(parse_list(&to_list("Book", &list)), list);
+    }
+}

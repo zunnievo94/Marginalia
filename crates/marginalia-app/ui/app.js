@@ -51,6 +51,8 @@ const state = {
   book2: { spread: 0, spreads: 1, step: 1 }, // two-page layout
   palette: { items: [], active: 0 },
   replace: { book: [], all: [], dirty: false }, // find-and-replace rules
+  replaceView: "rules", // Replace tab: rules | names
+  names: { id: null, groups: null, filter: "", loading: false }, // names in the book
 };
 
 // ------------------------------------------------------------- helpers
@@ -2181,11 +2183,27 @@ function renderReplace(list) {
     list.append(el(`<div class="hint">Open a book to replace words in it.</div>`));
     return;
   }
+  const seg = el(`<div class="replace-switch"><div class="seg" role="radiogroup" aria-label="Show">
+    <button role="radio" data-v="rules">Rules</button><button role="radio" data-v="names">Names in this book</button></div></div>`);
+  seg.querySelectorAll("button").forEach((b) => {
+    b.setAttribute("aria-checked", String(b.dataset.v === state.replaceView));
+    b.onclick = () => {
+      state.replaceView = b.dataset.v;
+      renderNotesPanel();
+    };
+  });
+  list.append(seg);
+  if (state.replaceView === "names") return renderNames(list);
   list.append(el(`<div class="hint">Change a word or name everywhere: in what you read, search and hear.
     The book file is not modified, and longer phrases win over shorter ones.</div>`));
   const section = (key, title) => {
     const rules = state.replace[key];
-    list.append(el(`<div class="note-group">${esc(title)}</div>`));
+    const head = el(`<div class="note-group rule-head"><span class="grow">${esc(title)}</span>
+      <button class="link-btn" data-act="import" title="Add rules from a text file, one find=replace per line">Import…</button>
+      <button class="link-btn" data-act="export"${rules.length ? "" : " disabled"}>Export…</button></div>`);
+    head.querySelector('[data-act="import"]').onclick = () => importRules(key);
+    head.querySelector('[data-act="export"]').onclick = () => exportRules(key);
+    list.append(head);
     rules.forEach((r, i) => list.append(ruleRow(rules, r, i)));
     const add = el(`<button class="btn small quiet add-rule">${icon("plus")}Add rule</button>`);
     add.onclick = () => {
@@ -2211,6 +2229,95 @@ function renderReplace(list) {
     renderNotesPanel();
   };
   list.append(bar);
+}
+
+async function importRules(scope) {
+  // Imported rules join the saved ones, so save pending edits first.
+  if (state.replace.dirty) await applyReplacements();
+  const r = await call("replacements_import", { id: state.book.entry.id, scope });
+  if (!r) return;
+  state.replace = { book: r.rules.book, all: r.rules.all, dirty: false };
+  toast(`Imported ${r.imported} rule${r.imported === 1 ? "" : "s"}.`);
+  await reloadBookText();
+}
+
+async function exportRules(scope) {
+  if (state.replace.dirty) await applyReplacements();
+  const path = await call("replacements_export", { id: state.book.entry.id, scope });
+  if (path) toast("Saved to " + path);
+}
+
+// Names in the book, grouped by first word: different translations of the
+// same character sit together, and one click maps a variant onto another.
+async function loadNames(force = false) {
+  const id = state.book.entry.id;
+  if (!force && state.names.id === id && state.names.groups) return;
+  state.names = { ...state.names, id, groups: null, loading: true };
+  if (state.panelTab === "replace") renderNotesPanel();
+  const groups = await invoke("book_names", { id }).catch((e) => {
+    toast(String(e), { error: true });
+    return [];
+  });
+  if (state.book?.entry.id !== id) return;
+  state.names = { ...state.names, groups, loading: false };
+  if (state.panelTab === "replace" && state.replaceView === "names") renderNotesPanel();
+}
+
+function renderNames(list) {
+  if (state.names.id !== state.book.entry.id || (!state.names.groups && !state.names.loading)) {
+    loadNames();
+  }
+  if (!state.names.groups) {
+    list.append(el(`<div class="hint">Looking for names in the book…</div>`));
+    return;
+  }
+  list.append(el(`<div class="hint">Capitalised names used at least twice, grouped by their first word.
+    A name translated several ways shows its variants together: map the rare ones onto the usual one.</div>`));
+  const f = el(`<div class="filter"><input type="search" placeholder="Filter names" aria-label="Filter names"></div>`);
+  const input = f.querySelector("input");
+  input.value = state.names.filter;
+  list.append(f);
+  const box = el(`<div class="names"></div>`);
+  list.append(box);
+  const draw = () => {
+    const q = fold(state.names.filter.trim());
+    const groups = state.names.groups
+      .map((g) => ({ ...g, names: g.names.filter(([n]) => !q || fold(n).includes(q)) }))
+      .filter((g) => g.names.length);
+    box.replaceChildren();
+    if (!groups.length) {
+      box.append(el(`<div class="hint">${state.names.groups.length ? "No names match." : "No names found."}</div>`));
+      return;
+    }
+    for (const g of groups.slice(0, 200)) {
+      const top = g.names[0][0];
+      const group = el(`<div class="name-group${g.names.length > 1 ? " variants" : ""}"></div>`);
+      for (const [name, count] of g.names) {
+        const row = el(`<div class="name-row">
+          <button class="name" title="Find “${esc(name)}” in the book">${esc(name)}</button>
+          <span class="count-n">${count}</span>
+          ${name !== top ? `<button class="btn small quiet use" title="Replace “${esc(name)}” with “${esc(top)}” everywhere">${icon("replace")}Use “${esc(top)}”</button>` : ""}
+          <button class="icon-btn small" aria-label="New rule for ${esc(name)}" title="New rule for this name">${icon("edit")}</button>
+        </div>`);
+        row.querySelector(".name").onclick = () => searchFor(name);
+        row.querySelector(".use")?.addEventListener("click", async () => {
+          state.replace.book.push({ ...newRule(name), replace: top });
+          await applyReplacements();
+        });
+        row.querySelector(".icon-btn").onclick = () => {
+          state.replaceView = "rules";
+          openReplace(name);
+        };
+        group.append(row);
+      }
+      box.append(group);
+    }
+  };
+  input.oninput = () => {
+    state.names.filter = input.value;
+    draw();
+  };
+  draw();
 }
 
 function ruleRow(rules, r, i) {
@@ -2257,7 +2364,14 @@ async function applyReplacements() {
   const id = state.book.entry.id;
   await call("replacements_set", { id, rules });
   state.replace = { ...rules, dirty: false };
-  // The text changed: reload the book where the reader is.
+  await reloadBookText();
+  const n = rules.book.filter((r) => r.enabled).length + rules.all.filter((r) => r.enabled).length;
+  toast(n ? `${n} replacement rule${n === 1 ? "" : "s"} in use.` : "No replacements in use.", { timeout: 2500 });
+}
+
+// The text changed: reload the book where the reader is.
+async function reloadBookText() {
+  const id = state.book.entry.id;
   stopSpeech();
   const pos = visiblePosition();
   const view = await call("book_open", { id });
@@ -2267,8 +2381,7 @@ async function applyReplacements() {
   if (state.search.query.trim()) runSearch();
   renderSidebar();
   renderNotesPanel();
-  const n = rules.book.filter((r) => r.enabled).length + rules.all.filter((r) => r.enabled).length;
-  toast(n ? `${n} replacement rule${n === 1 ? "" : "s"} in use.` : "No replacements in use.", { timeout: 2500 });
+  if (state.names.id === id) loadNames(true);
 }
 
 // --------------------------------------------------------------- search
