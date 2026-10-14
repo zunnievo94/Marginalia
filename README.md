@@ -41,6 +41,10 @@ The builds are not code-signed yet:
   move it to Applications and run `xattr -cr /Applications/Marginalia.app`.
 - **Linux AppImage**: `chmod +x Marginalia-linux-x86_64.AppImage` and run it.
 
+Once installed, Marginalia can update itself: *Settings → Updates*, or the
+notice it shows at start when a new version is out
+([how it works](docs/updates.md)).
+
 ## Status
 
 Early stage. What works today:
@@ -283,6 +287,7 @@ pure CLI better than a cross-platform reading app with audio.
 - [x] Basic book styling (bold/italic, tables)
 - [x] FB2, TXT, Markdown and PDF text
 - [x] Find and replace words in a book
+- [x] In-app updates
 
 ## Licenses
 

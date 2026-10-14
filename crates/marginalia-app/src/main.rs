@@ -751,6 +751,74 @@ fn model_remove(state: State<AppState>, id: String) -> CmdResult<()> {
     }
 }
 
+#[derive(Serialize)]
+struct UpdateInfo {
+    /// Whether this build can update itself (release builds made with a
+    /// signing key).
+    enabled: bool,
+    current: String,
+    /// A newer version, if there is one.
+    version: Option<String>,
+    notes: Option<String>,
+}
+
+fn updates_enabled(app: &AppHandle) -> bool {
+    app.config().plugins.0.contains_key("updater")
+}
+
+#[tauri::command]
+async fn update_check(app: AppHandle) -> CmdResult<UpdateInfo> {
+    use tauri_plugin_updater::UpdaterExt;
+    let mut info = UpdateInfo {
+        enabled: updates_enabled(&app),
+        current: app.package_info().version.to_string(),
+        version: None,
+        notes: None,
+    };
+    if !info.enabled {
+        return Ok(info);
+    }
+    if let Some(update) = app.updater().map_err(err)?.check().await.map_err(err)? {
+        info.version = Some(update.version);
+        info.notes = update.body;
+    }
+    Ok(info)
+}
+
+#[derive(Clone, Serialize)]
+struct UpdateProgress {
+    done: u64,
+    total: Option<u64>,
+}
+
+/// Download and install the newest version, then restart into it.
+#[tauri::command]
+async fn update_install(app: AppHandle) -> CmdResult<()> {
+    use tauri_plugin_updater::UpdaterExt;
+    if !updates_enabled(&app) {
+        return Err("this build cannot update itself".into());
+    }
+    let update = app
+        .updater()
+        .map_err(err)?
+        .check()
+        .await
+        .map_err(err)?
+        .ok_or("Marginalia is up to date")?;
+    let mut done = 0u64;
+    update
+        .download_and_install(
+            |chunk, total| {
+                done += chunk as u64;
+                let _ = app.emit("update-progress", UpdateProgress { done, total });
+            },
+            || {},
+        )
+        .await
+        .map_err(err)?;
+    app.restart()
+}
+
 fn main() {
     let state = AppState {
         library: Mutex::new(Library::load()),
@@ -759,6 +827,15 @@ fn main() {
     };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // Only builds made with an update signing key carry the updater
+            // settings; the plugin refuses to start without them.
+            if updates_enabled(app.handle()) {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
+            Ok(())
+        })
         .register_uri_scheme_protocol("mgimg", |ctx, request| {
             let builder = tauri::http::Response::builder();
             match serve_image(ctx.app_handle(), request.uri().path()) {
@@ -804,6 +881,8 @@ fn main() {
             models_list,
             model_download,
             model_remove,
+            update_check,
+            update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Marginalia");

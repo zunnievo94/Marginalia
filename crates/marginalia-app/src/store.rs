@@ -137,6 +137,8 @@ pub struct Settings {
     /// Whether the notes panel on the right is open.
     pub notes_open: bool,
     pub notes_width: u32,
+    /// Look for a new version when the app starts.
+    pub check_updates: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -162,6 +164,7 @@ impl Default for Settings {
             speed: 1.0,
             notes_open: false,
             notes_width: 300,
+            check_updates: true,
         }
     }
 }

@@ -481,6 +481,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .setting .value { float: right; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
 .setting input[type="range"] { width: 100%; accent-color: var(--accent); }
 .setting.check label { display: flex; align-items: center; gap: 8px; font-weight: 400; cursor: pointer; }
+.setting.update .update-line { color: var(--muted); line-height: 1.5; margin-bottom: 8px; }
 .setting.check input { accent-color: var(--accent); width: 16px; height: 16px; }
 
 .seg {
