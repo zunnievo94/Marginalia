@@ -46,8 +46,9 @@ jobs:
           this tag; third-party components are listed in THIRD_PARTY_NOTICES.md.
 
           Read-aloud runs on your computer. The first time, download a voice
-          model (30–350 MB) for your book's language in the Voices view; for
-          Vietnamese the recommended one is Piper vais1000.
+          model (30–600 MB) for your book's language in the Voices view. For
+          Vietnamese, Piper vais1000 is small and quick to download, and
+          VieNeu-TTS v3 Turbo or Nano sound the most natural.
           NOTES
           gh release view "$TAG" >/dev/null 2>&1 ||
             gh release create "$TAG" --target "$GITHUB_SHA" \
