@@ -74,11 +74,26 @@ fn launcher_path() -> Option<PathBuf> {
 }
 
 fn refresh_menu() {
-    // Let the desktop pick up the new file types; harmless if missing.
+    // Let the desktop pick up the new entry and file types now (KDE caches
+    // launchers); each tool is harmless if missing. Not in tests, where the
+    // tools' exit interrupts other tests' network calls.
+    if cfg!(test) {
+        return;
+    }
     if let Some(dir) = launcher_path().as_deref().and_then(Path::parent) {
         let _ = std::process::Command::new("update-desktop-database")
             .arg(dir)
             .status();
+    }
+    for tool in ["kbuildsycoca6", "kbuildsycoca5"] {
+        if std::process::Command::new(tool)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        {
+            break;
+        }
     }
 }
 
@@ -92,6 +107,15 @@ fn write_launcher(appimage: &Path) -> std::io::Result<bool> {
     let path = launcher_path().ok_or_else(|| std::io::Error::other("no home directory"))?;
     changed |= write_if_changed(&path, desktop_entry(appimage).as_bytes())?;
     Ok(changed)
+}
+
+/// Give the program the name its launcher is matched by. GTK takes it from
+/// the command line, which in an AppImage is its wrapper (`AppRun`,
+/// `AppRun.wrapped`); the window then carries that name as its Wayland app
+/// id and X11 class, and KDE shows a generic icon in the taskbar. Must run
+/// before GTK starts.
+pub fn name_program() {
+    glib::set_prgname(Some(APP_ID));
 }
 
 /// Add or refresh the launcher and icon when running as an AppImage.

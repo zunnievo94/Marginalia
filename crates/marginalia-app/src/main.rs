@@ -1049,6 +1049,8 @@ async fn update_install(app: AppHandle) -> CmdResult<()> {
 
 fn main() {
     let cwd = std::env::current_dir().unwrap_or_default();
+    #[cfg(target_os = "linux")]
+    desktop::name_program();
     let settings = Settings::load();
     #[cfg(target_os = "linux")]
     if settings.app_menu {

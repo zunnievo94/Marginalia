@@ -25,3 +25,7 @@ marginalia-tts = { workspace = true, features = ["playback"] }
 tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 ureq = { version = "3", features = ["platform-verifier"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# To name the window before GTK starts (see desktop::name_program).
+glib = "0.18"

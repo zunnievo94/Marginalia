@@ -2758,6 +2758,7 @@ name = "marginalia-app"
 version = "0.0.10"
 dependencies = [
  "anyhow",
+ "glib",
  "marginalia-core",
  "marginalia-tts",
  "serde",
