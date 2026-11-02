@@ -53,6 +53,9 @@ const state = {
   replace: { book: [], all: [], dirty: false }, // find-and-replace rules
   replaceView: "rules", // Replace tab: rules | names
   names: { id: null, groups: null, filter: "", loading: false }, // names in the book
+  // AI translation and editing: settings (without the key), per-chapter
+  // [translated, edited] for the open book, the running job and the queue.
+  ai: { settings: null, status: [], statusId: null, busy: null, queue: [], glossary: null },
 };
 
 // ------------------------------------------------------------- helpers
@@ -704,6 +707,7 @@ function renderSettings(root) {
   check("hand_notes", "Handwritten margin notes");
   root.append(el(`<div class="section-header"><span class="grow">Read aloud</span></div>`));
   range("speed", "Speaking speed", 0.5, 2.5, 0.05, (v) => v.toFixed(2) + "×");
+  renderAiSettings(root);
   root.append(el(`<div class="section-header"><span class="grow">Updates</span></div>`));
   const upd = el(`<div class="setting update"><div class="update-line">Checking version…</div>
     <button class="btn small" hidden>Check for updates</button></div>`);
@@ -714,6 +718,368 @@ function renderSettings(root) {
     <kbd>←</kbd> <kbd>→</kbd> chapters (pages in the book layout) · <kbd>Ctrl</kbd> <kbd>B</kbd> side bar ·
     <kbd>Ctrl</kbd> <kbd>O</kbd> open · <kbd>Ctrl</kbd> <kbd>+</kbd>/<kbd>-</kbd> font size.
     Double-click a sentence to read aloud from there.</div>`));
+}
+
+// ------------------------------------------------------------------ AI
+
+const AI_MODELS = [
+  ["claude-opus-5-5", "Claude Opus 5.5: best quality"],
+  ["claude-sonnet-5-5", "Claude Sonnet 5.5: good, half the price"],
+  ["claude-haiku-5-5", "Claude Haiku 5.5: cheapest"],
+];
+const AI_STEP = { translate: ["Translate", "Translating", "Translated"], edit: ["Edit", "Editing", "Edited"] };
+
+function aiReady() {
+  const a = state.ai.settings;
+  return !!(a && a.key_hint && a.model);
+}
+
+function money(usd) {
+  if (usd == null) return "";
+  return usd < 0.01 ? "<$0.01" : "$" + usd.toFixed(usd < 1 ? 3 : 2);
+}
+
+async function loadAiStatus() {
+  const id = state.book?.entry.id;
+  if (!id) return;
+  const status = await invoke("ai_status", { id }).catch(() => []);
+  if (state.book?.entry.id !== id) return;
+  state.ai.status = status;
+  state.ai.statusId = id;
+  refreshAiBar();
+  aiAuto();
+}
+
+// Rough price of a step on the current chapter: about 2.5 characters a
+// token, as much written as read, plus some thinking.
+function aiEstimate() {
+  const price = state.ai.settings?.price;
+  if (!price) return "";
+  const chars = state.paragraphs.reduce((n, p) => n + p.join(" ").length, 0);
+  const tokens = chars / 2.5;
+  return "≈ " + money((tokens * price[0] + tokens * 1.3 * price[1]) / 1e6);
+}
+
+function aiBar() {
+  if (!state.book || !state.ai.settings) return null;
+  const bar = el(`<div class="ai-bar" aria-label="AI translation and editing"></div>`);
+  fillAiBar(bar);
+  return bar;
+}
+
+function refreshAiBar() {
+  const bar = document.querySelector(".ai-bar");
+  if (bar) fillAiBar(bar);
+}
+
+function fillAiBar(bar) {
+  bar.replaceChildren();
+  const ch = state.chapter;
+  if (!aiReady()) {
+    const b = el(`<button class="link-btn">✦ Translate or edit chapters with AI: add an API key in Settings</button>`);
+    b.onclick = () => setViewIfHidden("settings");
+    bar.append(b);
+    return;
+  }
+  const done = state.ai.status[ch] || [false, false];
+  const busy = state.ai.busy;
+  bar.append(el(`<span class="ai-mark" aria-hidden="true">✦</span>`));
+  ["translate", "edit"].forEach((step, k) => {
+    const [verb, doing, did] = AI_STEP[step];
+    const group = el(`<span class="ai-step"></span>`);
+    if (busy && busy.chapter === ch && busy.step === step) {
+      const part = busy.total > 1 ? ` ${Math.min(busy.done + 1, busy.total)}/${busy.total}` : "";
+      group.append(el(`<span class="ai-doing">${doing}…${part}</span>`));
+    } else if (done[k]) {
+      group.append(el(`<span class="ai-done">${icon("check")}${did}</span>`));
+      const redo = el(`<button class="link-btn" title="Ask again, replacing this ${step === "edit" ? "edit" : "translation"}">Redo</button>`);
+      redo.onclick = () => aiRun(ch, step);
+      const undo = el(`<button class="link-btn" title="Show the text from before this step">Undo</button>`);
+      undo.onclick = () => aiClear(ch, step);
+      group.append(redo, undo);
+    } else {
+      const queued = state.ai.queue.some((j) => j.chapter === ch && j.step === step);
+      const b = el(`<button class="btn small quiet" title="${esc(aiEstimate())}">${verb}${queued ? " (queued)" : ""}</button>`);
+      b.disabled = queued;
+      b.onclick = () => aiRun(ch, step);
+      group.append(b);
+    }
+    bar.append(group);
+  });
+  if (!state.ai.settings.use_ai_text && (done[0] || done[1])) {
+    bar.append(el(`<span class="hint-inline">AI text is hidden (Settings)</span>`));
+  }
+  const est = aiEstimate();
+  if (est && !(done[0] && done[1])) bar.append(el(`<span class="ai-cost" title="Estimated cost of one step on this chapter">${est}</span>`));
+}
+
+// Jobs run one at a time; `aiRun` queues the rest.
+function aiRun(chapter, step) {
+  if (!state.book) return;
+  if (!aiReady()) {
+    toast("Add an API key in Settings → AI first.", { actions: [{ label: "Settings", run: () => setViewIfHidden("settings") }] });
+    return;
+  }
+  const id = state.book.entry.id;
+  const same = (j) => j.id === id && j.chapter === chapter && j.step === step;
+  if ((state.ai.busy && same(state.ai.busy)) || state.ai.queue.some(same)) return;
+  state.ai.queue.push({ id, chapter, step, auto: false });
+  refreshAiBar();
+  aiNext();
+}
+
+async function aiNext() {
+  if (state.ai.busy || !state.ai.queue.length) return;
+  const job = state.ai.queue.shift();
+  state.ai.busy = { ...job, done: 0, total: 0 };
+  refreshAiBar();
+  try {
+    const r = await invoke("ai_run", { id: job.id, chapter: job.chapter, step: job.step });
+    state.ai.settings = await invoke("ai_config_get").catch(() => state.ai.settings);
+    const bits = [`${AI_STEP[job.step][2]} chapter ${job.chapter + 1}`];
+    if (r.usage.cost != null) bits.push(money(r.usage.cost));
+    if (r.new_terms) bits.push(`${r.new_terms} new name${r.new_terms === 1 ? "" : "s"} in the glossary`);
+    if (r.kept) bits.push(`${r.kept} paragraph${r.kept === 1 ? "" : "s"} kept as they were`);
+    if (!job.auto || r.kept) toast(bits.join(" · "));
+    if (state.book?.entry.id === job.id) {
+      state.ai.glossary = null;
+      await loadAiStatus();
+      if (job.chapter !== state.chapter) {
+        if (state.panelTab === "replace") renderNotesPanel();
+      } else if (job.auto && (state.tts === "playing" || state.tts === "loading")) {
+        // Don't cut off reading aloud: offer the new text instead.
+        toast(`${AI_STEP[job.step][2]} text of this chapter is ready.`, { timeout: 0, actions: [{ label: "Show it", run: reloadBookText }] });
+      } else {
+        await reloadBookText();
+      }
+    }
+  } catch (e) {
+    toast(`AI ${job.step} failed: ${e}`, { error: true });
+    // Stop the automatic jobs after a failure (no credit, wrong key...).
+    state.ai.queue = state.ai.queue.filter((j) => !j.auto);
+  } finally {
+    state.ai.busy = null;
+    refreshAiBar();
+    aiNext();
+  }
+}
+
+async function aiClear(chapter, step) {
+  await call("ai_clear", { id: state.book.entry.id, chapter, step });
+  await loadAiStatus();
+  if (chapter === state.chapter) await reloadBookText();
+}
+
+// With automatic work on, keep the chapter being read and the next one
+// translated and/or edited.
+function aiAuto() {
+  const mode = state.ai.settings?.auto;
+  if (!mode || !aiReady() || !state.book || state.ai.statusId !== state.book.entry.id) return;
+  const id = state.book.entry.id;
+  const steps = mode === "both" ? ["translate", "edit"] : [mode];
+  for (const chapter of [state.chapter, state.chapter + 1]) {
+    if (chapter >= state.book.toc.length) continue;
+    for (const step of steps) {
+      const k = step === "translate" ? 0 : 1;
+      const same = (j) => j.id === id && j.chapter === chapter && j.step === step;
+      if (state.ai.status[chapter]?.[k] || state.ai.queue.some(same) || (state.ai.busy && same(state.ai.busy))) continue;
+      state.ai.queue.push({ id, chapter, step, auto: true });
+    }
+  }
+  refreshAiBar();
+  aiNext();
+}
+
+async function saveAiSettings(change, apiKey) {
+  const before = state.ai.settings;
+  const { key_hint, price, spending, ...config } = { ...before, ...change };
+  state.ai.settings = await call("ai_config_set", { config, apiKey: apiKey ?? null });
+  if (state.view === "settings") refreshAiSettings();
+  if (state.book && ("use_ai_text" in change)) await reloadBookText();
+  else refreshAiBar();
+  if ("auto" in change) aiAuto();
+}
+
+function refreshAiSettings() {
+  const old = document.querySelector(".ai-settings");
+  if (!old) return;
+  const box = el(`<div class="ai-settings"></div>`);
+  fillAiSettings(box);
+  old.replaceWith(box);
+}
+
+function renderAiSettings(root) {
+  root.append(el(`<div class="section-header"><span class="grow">AI: translate and edit</span></div>`));
+  const box = el(`<div class="ai-settings"></div>`);
+  root.append(box);
+  if (!state.ai.settings) {
+    invoke("ai_config_get").then((a) => { state.ai.settings = a; refreshAiSettings(); }).catch(() => {});
+    return;
+  }
+  fillAiSettings(box);
+}
+
+function fillAiSettings(box) {
+  const a = state.ai.settings;
+  box.append(el(`<div class="hint">Uses your own API key: you pay the AI service for what you use.
+    <b>Translate</b> turns a chapter into your language. <b>Edit</b> polishes a machine translation and
+    keeps names of characters, places, items and skills the same in every chapter, using the book's
+    glossary. Each chapter is done once and saved.</div>`));
+  const field = (label, html, bind) => {
+    const n = el(`<div class="setting"><label>${label}</label>${html}</div>`);
+    bind(n);
+    box.append(n);
+  };
+  field("Service", `<select>
+      <option value="anthropic"${a.provider === "anthropic" ? " selected" : ""}>Claude (Anthropic)</option>
+      <option value="openai"${a.provider === "openai" ? " selected" : ""}>OpenAI-compatible (OpenAI, DeepSeek, OpenRouter…)</option>
+    </select>`, (n) => {
+    n.querySelector("select").onchange = (e) => {
+      const provider = e.target.value;
+      const model = provider === "anthropic" ? AI_MODELS[0][0] : "";
+      saveAiSettings({ provider, model });
+    };
+  });
+  field("API key", `<div class="key-row"><input type="password" autocomplete="off" spellcheck="false"
+      placeholder="${a.key_hint ? "Saved: …" + esc(a.key_hint) : a.provider === "anthropic" ? "sk-ant-…" : "sk-…"}">
+      <button class="btn small">Save</button></div>`, (n) => {
+    const input = n.querySelector("input");
+    const save = async () => {
+      if (!input.value.trim()) return;
+      await saveAiSettings({}, input.value.trim());
+      toast("API key saved.");
+    };
+    n.querySelector("button").onclick = save;
+    input.onkeydown = (e) => { if (e.key === "Enter") save(); };
+  });
+  if (a.provider === "openai") {
+    field("Address (base URL)", `<input type="text" spellcheck="false" value="${esc(a.base_url)}" placeholder="https://api.openai.com/v1">`, (n) => {
+      n.querySelector("input").onchange = (e) => saveAiSettings({ base_url: e.target.value.trim() });
+    });
+    field("Model", `<input type="text" spellcheck="false" value="${esc(a.model)}" placeholder="gpt-4.1-mini, deepseek-chat…">`, (n) => {
+      n.querySelector("input").onchange = (e) => saveAiSettings({ model: e.target.value.trim() });
+    });
+  } else {
+    field("Model", `<select>${AI_MODELS.map(([v, t]) => `<option value="${v}"${a.model === v ? " selected" : ""}>${t}</option>`).join("")}</select>`, (n) => {
+      n.querySelector("select").onchange = (e) => saveAiSettings({ model: e.target.value });
+    });
+  }
+  if (a.price) {
+    box.append(el(`<div class="hint">${esc(a.model)}: $${a.price[0]} per million tokens read, $${a.price[1]} per million written.
+      A chapter of 3,000 words costs about ${money((5000 * a.price[0] + 6500 * a.price[1]) / 1e6)} per step.</div>`));
+  }
+  field("Language", `<input type="text" value="${esc(a.language)}" placeholder="Vietnamese">`, (n) => {
+    n.querySelector("input").onchange = (e) => saveAiSettings({ language: e.target.value.trim() || "Vietnamese" });
+  });
+  field("Extra instructions (optional)", `<textarea rows="3" placeholder="e.g. Keep “ta / ngươi” in dialogue. Translate skill names into Sino-Vietnamese.">${esc(a.instructions)}</textarea>`, (n) => {
+    n.querySelector("textarea").onchange = (e) => saveAiSettings({ instructions: e.target.value });
+  });
+  field("Work automatically", `<select>
+      <option value="">Off: only when I ask</option>
+      <option value="edit">Edit the chapter I read and the next one</option>
+      <option value="translate">Translate the chapter I read and the next one</option>
+      <option value="both">Translate, then edit, the chapter I read and the next one</option>
+    </select>`, (n) => {
+    const sel = n.querySelector("select");
+    sel.value = a.auto || "";
+    sel.onchange = () => saveAiSettings({ auto: sel.value });
+  });
+  const show = el(`<div class="setting check"><label><input type="checkbox"${a.use_ai_text ? " checked" : ""}>Show the AI translation and edit instead of the book's text</label></div>`);
+  show.querySelector("input").onchange = (e) => saveAiSettings({ use_ai_text: e.target.checked });
+  box.append(show);
+  const s = a.spending;
+  if (s && (s.input_tokens || s.output_tokens)) {
+    const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.round(n / 1000) + "k");
+    box.append(el(`<div class="hint">Spent so far: ${s.cost ? "<b>" + money(s.cost) + "</b>, " : ""}${k(s.input_tokens)} tokens read, ${k(s.output_tokens)} written.</div>`));
+  }
+}
+
+// ------------------------------------------------------- AI glossary
+
+async function renderGlossary(list) {
+  const id = state.book.entry.id;
+  if (!state.ai.glossary || state.ai.glossary.id !== id) {
+    list.append(el(`<div class="hint">Loading the glossary…</div>`));
+    const terms = await invoke("ai_glossary_get", { id }).catch(() => []);
+    state.ai.glossary = { id, terms, filter: "" };
+    if (state.panelTab === "replace" && state.replaceView === "glossary") renderNotesPanel();
+    return;
+  }
+  const g = state.ai.glossary;
+  list.append(el(`<div class="hint">Names the AI met while translating and editing this book, with the form it uses
+    and the other forms it found. They are sent with every chapter so names stay the same. Change a form here and
+    the next chapters use it; <b>Make rules</b> also turns the other forms into replace rules, which fix chapters
+    already done, for free.</div>`));
+  if (!g.terms.length) {
+    list.append(el(`<div class="hint">Empty: translate or edit a chapter to start it.</div>`));
+    return;
+  }
+  const head = el(`<div class="note-group rule-head"><span class="grow">${g.terms.length} names</span>
+    <button class="link-btn" title="Replace every other form with the form to use, in the whole book">Make rules</button></div>`);
+  head.querySelector("button").onclick = glossaryToRules;
+  list.append(head);
+  const f = el(`<div class="filter"><input type="search" placeholder="Filter names" aria-label="Filter names"></div>`);
+  const input = f.querySelector("input");
+  input.value = g.filter;
+  list.append(f);
+  const box = el(`<div class="glossary"></div>`);
+  list.append(box);
+  const save = () => invoke("ai_glossary_set", { id, terms: g.terms }).catch((e) => toast(String(e), { error: true }));
+  const KINDS = ["character", "place", "organization", "item", "skill", "title", "other"];
+  const draw = () => {
+    box.replaceChildren();
+    const q = fold(g.filter.trim());
+    const shown = g.terms.filter((t) => !q || fold(t.term).includes(q) || t.variants.some((v) => fold(v).includes(q)));
+    for (const t of shown.slice(0, 300)) {
+      const row = el(`<div class="term-row">
+        <input class="term" type="text" value="${esc(t.term)}" aria-label="Form to use">
+        <select aria-label="Kind">${KINDS.map((k) => `<option${k === t.kind ? " selected" : ""}>${k}</option>`).join("")}</select>
+        <button class="icon-btn small" aria-label="Remove ${esc(t.term)}">${icon("close")}</button>
+        ${t.variants.length ? `<div class="variants">also: ${t.variants.map(esc).join(", ")}</div>` : ""}</div>`);
+      row.querySelector(".term").onchange = (e) => {
+        const v = e.target.value.trim();
+        if (v && v !== t.term) {
+          if (!t.variants.includes(t.term)) t.variants.push(t.term);
+          t.variants = t.variants.filter((x) => x !== v);
+          t.term = v;
+          save();
+          draw();
+        }
+      };
+      row.querySelector("select").onchange = (e) => { t.kind = e.target.value; save(); };
+      row.querySelector("button").onclick = () => {
+        g.terms.splice(g.terms.indexOf(t), 1);
+        save();
+        draw();
+      };
+      box.append(row);
+    }
+  };
+  input.oninput = () => { g.filter = input.value; draw(); };
+  draw();
+}
+
+async function glossaryToRules() {
+  const g = state.ai.glossary;
+  if (state.replace.dirty) await applyReplacements();
+  const have = new Set(state.replace.book.map((r) => r.find.trim().toLowerCase()));
+  let added = 0;
+  for (const t of g.terms) {
+    for (const v of t.variants) {
+      // Original-language forms (Chinese characters) are not in the text.
+      if (/[\u3400-\u9fff]/.test(v) || have.has(v.toLowerCase())) continue;
+      state.replace.book.push({ find: v, replace: t.term, whole_word: true, match_case: false, enabled: true });
+      have.add(v.toLowerCase());
+      added++;
+    }
+  }
+  if (!added) {
+    toast("Every other form already has a rule.");
+    return;
+  }
+  state.replace.dirty = true;
+  await applyReplacements();
+  toast(`Added ${added} replace rule${added === 1 ? "" : "s"}.`);
 }
 
 // ------------------------------------------------------------- updates
@@ -833,6 +1199,10 @@ async function openBook(id) {
   state.bookmarks = await invoke("bookmarks_list", { id }).catch(() => []);
   const rules = await invoke("replacements_get", { id }).catch(() => ({ book: [], all: [] }));
   state.replace = { book: rules.book, all: rules.all, dirty: false };
+  state.ai.status = [];
+  state.ai.statusId = null;
+  state.ai.glossary = null;
+  loadAiStatus();
   state.search = { query: "", hits: [], truncated: false, active: -1 };
   state.notesFilter = "";
   closeNoteEditor();
@@ -916,6 +1286,7 @@ async function loadChapter(index, { scroll = "top", paragraph = 0 } = {}) {
     state.paragraphs = state.blocks.filter((b) => b.kind === "text").map((b) => b.sentences);
     state.chapter = index;
     renderContent();
+    aiAuto();
   }
   if (scroll === "top") {
     goToParagraph(0);
@@ -959,6 +1330,8 @@ function renderContent() {
   // diacritics, Simplified vs Traditional Chinese) and hyphenate.
   if (entry.language) reading.lang = entry.language.replace("_", "-");
   styleReading(reading);
+  const bar = aiBar();
+  if (bar) reading.append(bar);
   const norm = (s) => s.toLowerCase().replace(/\s+/g, " ").trim();
   const book = layout() === "book";
   let pi = -1; // index among text paragraphs (what positions and speech use)
@@ -1553,6 +1926,11 @@ function paletteItems(q) {
     { label: "Book map", icon: "map", run: () => { updateSetting("toc_mode", "map"); setViewIfHidden("chapters"); } },
     { label: "Notes and bookmarks panel", icon: "note", run: toggleNotesPanel },
     { label: "Replace text in this book", icon: "replace", run: () => openReplace() },
+    ...(state.book ? [
+      { label: "AI: translate this chapter", icon: "replace", run: () => aiRun(state.chapter, "translate") },
+      { label: "AI: edit this chapter (consistent names, natural phrasing)", icon: "replace", run: () => aiRun(state.chapter, "edit") },
+      { label: "AI: glossary of names", icon: "replace", run: () => { state.replaceView = "glossary"; openReplace(); } },
+    ] : []),
     { label: "Bookmark this place", icon: "bookmark", run: toggleBookmark },
     { label: "Open a book…", icon: "plus", run: pickBooks },
     { label: "Library", icon: "library", run: () => setViewIfHidden("library") },
@@ -1755,6 +2133,7 @@ function wire() {
 async function main() {
   wire();
   state.settings = await invoke("settings_get");
+  state.ai.settings = await invoke("ai_config_get").catch(() => null);
   applySettings();
   await refreshLibrary();
 
@@ -1768,6 +2147,12 @@ async function main() {
     renderDownloads();
   });
   listen("open-files", () => openPending());
+  listen("ai-progress", (e) => {
+    const b = state.ai.busy;
+    if (!b || b.chapter !== e.payload.chapter || b.step !== e.payload.step) return;
+    Object.assign(b, { done: e.payload.done, total: e.payload.total });
+    refreshAiBar();
+  });
   listen("update-progress", (e) => {
     if (!state.update?.installing) return;
     state.update.installing = e.payload;
@@ -2276,7 +2661,7 @@ function renderReplace(list) {
     return;
   }
   const seg = el(`<div class="replace-switch"><div class="seg" role="radiogroup" aria-label="Show">
-    <button role="radio" data-v="rules">Rules</button><button role="radio" data-v="names">Names in this book</button></div></div>`);
+    <button role="radio" data-v="rules">Rules</button><button role="radio" data-v="names">Names</button><button role="radio" data-v="glossary">AI glossary</button></div></div>`);
   seg.querySelectorAll("button").forEach((b) => {
     b.setAttribute("aria-checked", String(b.dataset.v === state.replaceView));
     b.onclick = () => {
@@ -2286,6 +2671,7 @@ function renderReplace(list) {
   });
   list.append(seg);
   if (state.replaceView === "names") return renderNames(list);
+  if (state.replaceView === "glossary") return renderGlossary(list);
   list.append(el(`<div class="hint">Change a word or name everywhere: in what you read, search and hear.
     The book file is not modified, and longer phrases win over shorter ones.</div>`));
   const section = (key, title) => {

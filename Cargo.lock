@@ -2767,6 +2767,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "ureq 3.4.2",
 ]
 
 [[package]]

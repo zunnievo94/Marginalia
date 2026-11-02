@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai;
 #[cfg(target_os = "linux")]
 mod appimage;
 mod bookmarks;
@@ -57,11 +58,164 @@ impl AppState {
             .map(|e| e.path.clone())
             .ok_or("This book is no longer in the library.")?;
         let mut book = marginalia_core::open(&path).map_err(err)?;
+        if ai::load_config().use_ai_text {
+            ai::apply(id, &mut book);
+        }
         replacements::replacer(id).apply_to_book(&mut book);
         let book = Arc::new(book);
         *open = Some((id.to_string(), book.clone()));
         Ok(book)
     }
+
+    /// Forget the parsed book, so the next read shows changed text.
+    fn reload(&self) {
+        *self.open.lock().unwrap() = None;
+    }
+
+    fn book_path(&self, id: &str) -> CmdResult<PathBuf> {
+        self.library
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|e| e.path.clone())
+            .ok_or_else(|| "This book is no longer in the library.".into())
+    }
+}
+
+// --------------------------------------------------------------------- AI
+
+#[derive(Serialize)]
+struct AiSettings {
+    #[serde(flatten)]
+    config: ai::Config,
+    /// The last characters of the saved key; the key itself stays here.
+    key_hint: String,
+    price: Option<(f64, f64)>,
+    spending: ai::Spending,
+}
+
+#[tauri::command]
+fn ai_config_get() -> AiSettings {
+    let mut config = ai::load_config();
+    let key = std::mem::take(&mut config.api_key);
+    let n = key.chars().count();
+    let key_hint = if n == 0 {
+        String::new()
+    } else {
+        key.chars().skip(n.saturating_sub(4)).collect()
+    };
+    AiSettings {
+        price: ai::price(&config.provider, &config.model),
+        config,
+        key_hint,
+        spending: ai::spending(),
+    }
+}
+
+/// Save the AI settings; the key changes only when `api_key` is given.
+#[tauri::command]
+fn ai_config_set(
+    state: State<AppState>,
+    mut config: ai::Config,
+    api_key: Option<String>,
+) -> CmdResult<AiSettings> {
+    config.api_key = api_key.unwrap_or_else(|| ai::load_config().api_key);
+    ai::save_config(&config).map_err(err)?;
+    state.reload();
+    Ok(ai_config_get())
+}
+
+/// For each chapter: whether its translation and its edit are saved.
+#[tauri::command]
+async fn ai_status(state: State<'_, AppState>, id: String) -> CmdResult<Vec<[bool; 2]>> {
+    let path = state.book_path(&id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let book = marginalia_core::open(&path).map_err(err)?;
+        Ok(ai::status(&id, &book))
+    })
+    .await
+    .map_err(err)?
+}
+
+#[derive(Serialize)]
+struct AiResult {
+    usage: ai::Usage,
+    new_terms: usize,
+    kept: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct AiProgress {
+    id: String,
+    chapter: usize,
+    step: ai::Step,
+    done: usize,
+    total: usize,
+}
+
+/// Translate or edit a chapter with the reader's AI service.
+#[tauri::command]
+async fn ai_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    chapter: usize,
+    step: ai::Step,
+) -> CmdResult<AiResult> {
+    let config = ai::load_config();
+    if config.api_key.trim().is_empty() {
+        return Err("Add an API key in Settings → AI first.".into());
+    }
+    if config.model.trim().is_empty() {
+        return Err("Choose a model in Settings → AI first.".into());
+    }
+    let path = state.book_path(&id)?;
+    let app2 = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<AiResult> {
+        let book = marginalia_core::open(&path)?;
+        let mut job = ai::Job::new(&config, step, ai::load_glossary(&id));
+        let replacer = replacements::replacer(&id);
+        let mut progress = |done, total| {
+            let _ = app2.emit(
+                "ai-progress",
+                AiProgress {
+                    id: id.clone(),
+                    chapter,
+                    step,
+                    done,
+                    total,
+                },
+            );
+        };
+        ai::run(&id, &book, chapter, &mut job, &replacer, &mut progress)?;
+        Ok(AiResult {
+            usage: job.usage,
+            new_terms: job.new_terms,
+            kept: job.kept,
+        })
+    })
+    .await
+    .map_err(err)?
+    .map_err(|e| format!("{e:#}"))?;
+    app.state::<AppState>().reload();
+    Ok(result)
+}
+
+#[tauri::command]
+fn ai_clear(state: State<AppState>, id: String, chapter: usize, step: ai::Step) -> CmdResult<()> {
+    ai::clear(&id, chapter, step).map_err(err)?;
+    state.reload();
+    Ok(())
+}
+
+#[tauri::command]
+fn ai_glossary_get(id: String) -> Vec<ai::Term> {
+    ai::load_glossary(&id)
+}
+
+#[tauri::command]
+fn ai_glossary_set(id: String, terms: Vec<ai::Term>) -> CmdResult<()> {
+    ai::save_glossary(&id, &terms).map_err(err)
 }
 
 // ---------------------------------------------------------------- library
@@ -937,6 +1091,13 @@ fn main() {
             models_list,
             model_download,
             model_remove,
+            ai_config_get,
+            ai_config_set,
+            ai_status,
+            ai_run,
+            ai_clear,
+            ai_glossary_get,
+            ai_glossary_set,
             update_check,
             update_install,
         ])

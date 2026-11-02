@@ -121,6 +121,16 @@ uses the system's CJK fonts). Three layouts, switched from the toolbar:
   first word, so a character translated several ways (common in
   machine-translated novels) shows its variants side by side; one click
   maps a rare variant onto the usual one.
+- **AI translate and edit** (optional, with your own API key for Claude or
+  any OpenAI-compatible service, set in Settings → AI): two separate steps
+  per chapter. *Translate* turns it into your language; *Edit* polishes a
+  machine translation and keeps the names of characters, places, items and
+  skills consistent. The book's **AI glossary** (the names met so far and
+  their other forms) goes with every request, and **Make rules** turns
+  those other forms into replace rules. Each chapter is done once and
+  saved; paragraphs map one to one, so notes and positions stay put. It can
+  also run automatically on the chapter you read and the next one, and
+  Settings shows what you have spent.
 - **Bookmarks**: <kbd>Ctrl</kbd>+<kbd>D</kbd> (or the ribbon button) marks the
   paragraph you are reading; bookmarks are listed next to the notes.
 - **Voices**: pick a voice per language (Vietnamese books keep a Vietnamese
