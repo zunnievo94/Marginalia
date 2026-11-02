@@ -41,6 +41,10 @@ The builds are not code-signed yet:
   move it to Applications and run `xattr -cr /Applications/Marginalia.app`.
 - **Linux AppImage**: `chmod +x Marginalia-linux-x86_64.AppImage` and run it.
 
+The installers register Marginalia for EPUB, MOBI/PRC/AZW, AZW3 and FB2
+files: double-click a book (or use *Open with*) and it is added to the
+library and opened, in the running window if Marginalia is already open.
+
 Once installed, Marginalia can update itself: *Settings → Updates*, or the
 notice it shows at start when a new version is out
 ([how it works](docs/updates.md)).

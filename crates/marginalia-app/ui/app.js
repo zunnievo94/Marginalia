@@ -806,6 +806,12 @@ async function addPaths(paths) {
   await handleAdded(res);
 }
 
+// Books opened from the file manager (double-click, "Open with").
+async function openPending() {
+  const res = await invoke("library_pending").catch(() => null);
+  if (res && (res.added.length || res.errors.length)) await handleAdded(res);
+}
+
 async function handleAdded(res) {
   for (const e of res.errors) toast(e, { error: true });
   await refreshLibrary();
@@ -1761,6 +1767,7 @@ async function main() {
     if (state.view === "voices") renderSidebar();
     renderDownloads();
   });
+  listen("open-files", () => openPending());
   listen("update-progress", (e) => {
     if (!state.update?.installing) return;
     state.update.installing = e.payload;
@@ -1789,6 +1796,7 @@ async function main() {
   }
   renderSidebar();
   renderNotesPanel();
+  await openPending();
   if (state.settings.check_updates) setTimeout(() => checkUpdate({ quiet: true }), 4000);
   renderStatus();
 }

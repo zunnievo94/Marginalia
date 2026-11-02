@@ -34,6 +34,9 @@ struct AppState {
     /// The open book, parsed once and shared with the speech thread.
     open: Mutex<Option<(String, Arc<Book>)>>,
     speech: speech::Speech,
+    /// Books the system asked us to open (double-click, "Open with"),
+    /// waiting for the window to take them.
+    pending: Mutex<Vec<PathBuf>>,
 }
 
 impl AppState {
@@ -144,6 +147,47 @@ async fn library_pick(app: AppHandle, state: State<'_, AppState>) -> CmdResult<A
         .into_iter()
         .filter_map(|p| p.into_path().ok())
         .collect();
+    library_add(state, paths)
+}
+
+/// Files given on a command line, as the system passes the books to open.
+fn file_args<I: IntoIterator<Item = String>>(args: I, cwd: &std::path::Path) -> Vec<PathBuf> {
+    args.into_iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .map(|a| {
+            let p = PathBuf::from(a);
+            if p.is_absolute() {
+                p
+            } else {
+                cwd.join(p)
+            }
+        })
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+/// Queue books to open and tell the window, bringing it to the front.
+fn open_files(app: &AppHandle, paths: Vec<PathBuf>) {
+    if paths.is_empty() {
+        return;
+    }
+    app.state::<AppState>()
+        .pending
+        .lock()
+        .unwrap()
+        .extend(paths);
+    let _ = app.emit("open-files", ());
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// Add the books waiting to be opened; the window opens the first one.
+#[tauri::command]
+fn library_pending(state: State<AppState>) -> CmdResult<AddResult> {
+    let paths = std::mem::take(&mut *state.pending.lock().unwrap());
     library_add(state, paths)
 }
 
@@ -820,12 +864,19 @@ async fn update_install(app: AppHandle) -> CmdResult<()> {
 }
 
 fn main() {
+    let cwd = std::env::current_dir().unwrap_or_default();
     let state = AppState {
         library: Mutex::new(Library::load()),
         settings: Mutex::new(Settings::load()),
+        pending: Mutex::new(file_args(std::env::args(), &cwd)),
         ..AppState::default()
     };
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        // A second launch (opening a book while Marginalia runs) hands its
+        // files to this window and quits.
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            open_files(app, file_args(args, std::path::Path::new(&cwd)));
+        }))
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Only builds made with an update signing key carry the updater
@@ -852,6 +903,7 @@ fn main() {
             library_list,
             library_add,
             library_pick,
+            library_pending,
             library_remove,
             book_open,
             chapter_get,
@@ -884,6 +936,32 @@ fn main() {
             update_check,
             update_install,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Marginalia");
+        .build(tauri::generate_context!())
+        .expect("error while building Marginalia");
+    app.run(|_app, _event| {
+        // macOS passes opened files as an event, not on the command line.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = _event {
+            let paths = urls
+                .into_iter()
+                .filter_map(|u| u.to_file_path().ok())
+                .collect();
+            open_files(_app, paths);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn book_paths_from_arguments() {
+        let dir = std::env::temp_dir().join("marginalia-args-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.prc"), b"x").unwrap();
+        let args = ["marginalia", "--flag", "a.prc", "missing.epub"].map(String::from);
+        assert_eq!(file_args(args, &dir), [dir.join("a.prc")]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

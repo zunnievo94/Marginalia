@@ -39,6 +39,63 @@
       "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "epub"
+        ],
+        "name": "EPUB book",
+        "description": "EPUB book",
+        "role": "Viewer",
+        "mimeType": "application/epub+zip"
+      },
+      {
+        "ext": [
+          "mobi",
+          "prc",
+          "azw"
+        ],
+        "name": "Mobipocket book",
+        "description": "Mobipocket / Kindle book",
+        "role": "Viewer",
+        "mimeType": "application/x-mobipocket-ebook"
+      },
+      {
+        "ext": [
+          "azw3"
+        ],
+        "name": "Kindle book",
+        "description": "Kindle KF8 book",
+        "role": "Viewer",
+        "mimeType": "application/vnd.amazon.mobi8-ebook"
+      },
+      {
+        "ext": [
+          "fb2"
+        ],
+        "name": "FictionBook",
+        "description": "FictionBook book",
+        "role": "Viewer",
+        "mimeType": "application/x-fictionbook+xml"
+      },
+      {
+        "ext": [
+          "fbz"
+        ],
+        "name": "FictionBook (zipped)",
+        "description": "Zipped FictionBook book",
+        "role": "Viewer",
+        "mimeType": "application/x-zip-compressed-fb2"
+      }
+    ],
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/marginalia.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/marginalia.desktop"
+      }
+    }
   }
 }
