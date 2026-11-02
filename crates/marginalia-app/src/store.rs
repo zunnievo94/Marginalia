@@ -139,6 +139,8 @@ pub struct Settings {
     pub notes_width: u32,
     /// Look for a new version when the app starts.
     pub check_updates: bool,
+    /// Linux AppImage: keep Marginalia in the application menu.
+    pub app_menu: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -165,6 +167,7 @@ impl Default for Settings {
             notes_open: false,
             notes_width: 300,
             check_updates: true,
+            app_menu: true,
         }
     }
 }

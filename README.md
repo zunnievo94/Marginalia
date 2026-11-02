@@ -44,6 +44,9 @@ The builds are not code-signed yet:
 The installers register Marginalia for EPUB, MOBI/PRC/AZW, AZW3 and FB2
 files: double-click a book (or use *Open with*) and it is added to the
 library and opened, in the running window if Marginalia is already open.
+On Linux, the AppImage adds itself to the application menu (with its icon)
+the first time it runs; *Settings → Desktop* shows this and can add or
+remove it.
 
 Once installed, Marginalia can update itself: *Settings → Updates*, or the
 notice it shows at start when a new version is out

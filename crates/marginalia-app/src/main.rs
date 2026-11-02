@@ -4,9 +4,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai;
-#[cfg(target_os = "linux")]
-mod appimage;
 mod bookmarks;
+#[cfg(target_os = "linux")]
+mod desktop;
 mod notes;
 mod replacements;
 mod speech;
@@ -80,6 +80,34 @@ impl AppState {
             .map(|e| e.path.clone())
             .ok_or_else(|| "This book is no longer in the library.".into())
     }
+}
+
+// ---------------------------------------------------------------- desktop
+
+/// Whether Marginalia is in the Linux application menu, and whether it
+/// manages that entry itself (as an AppImage). `null` elsewhere.
+#[tauri::command]
+fn desktop_status() -> Option<serde_json::Value> {
+    #[cfg(target_os = "linux")]
+    return serde_json::to_value(desktop::status()).ok();
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
+/// Add Marginalia to the application menu, or take it out (and keep it
+/// out: the AppImage no longer adds itself at start).
+#[tauri::command]
+fn desktop_set_menu(state: State<AppState>, on: bool) -> CmdResult<Option<serde_json::Value>> {
+    #[cfg(target_os = "linux")]
+    {
+        desktop::set_launcher(on).map_err(err)?;
+        let mut settings = state.settings.lock().unwrap();
+        settings.app_menu = on;
+        settings.save().map_err(err)?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (state, on);
+    Ok(desktop_status())
 }
 
 // --------------------------------------------------------------------- AI
@@ -1020,12 +1048,15 @@ async fn update_install(app: AppHandle) -> CmdResult<()> {
 }
 
 fn main() {
-    #[cfg(target_os = "linux")]
-    appimage::integrate();
     let cwd = std::env::current_dir().unwrap_or_default();
+    let settings = Settings::load();
+    #[cfg(target_os = "linux")]
+    if settings.app_menu {
+        desktop::integrate();
+    }
     let state = AppState {
         library: Mutex::new(Library::load()),
-        settings: Mutex::new(Settings::load()),
+        settings: Mutex::new(settings),
         pending: Mutex::new(file_args(std::env::args(), &cwd)),
         ..AppState::default()
     };
@@ -1091,6 +1122,8 @@ fn main() {
             models_list,
             model_download,
             model_remove,
+            desktop_status,
+            desktop_set_menu,
             ai_config_get,
             ai_config_set,
             ai_status,
