@@ -3,6 +3,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "linux")]
+mod appimage;
 mod bookmarks;
 mod notes;
 mod replacements;
@@ -864,6 +866,8 @@ async fn update_install(app: AppHandle) -> CmdResult<()> {
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    appimage::integrate();
     let cwd = std::env::current_dir().unwrap_or_default();
     let state = AppState {
         library: Mutex::new(Library::load()),
