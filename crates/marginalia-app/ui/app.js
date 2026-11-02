@@ -1452,6 +1452,10 @@ function renderContent() {
     const page = el(`<div class="page"></div>`);
     page.append(reading, el(`<aside class="margin" aria-label="Margin notes"></aside>`));
     content.replaceChildren(page);
+    if (state.chapter + 1 < toc.length) {
+      content.append(el(`<div class="pull-next" aria-hidden="true"><div class="pull-label">Keep scrolling for
+        <b>${esc(toc[state.chapter + 1].title)}</b></div><div class="pull-track"><div class="pull-fill"></div></div></div>`));
+    }
     content.scrollTop = 0;
   }
   applyNoteMarks();
@@ -2082,6 +2086,57 @@ function wire() {
     if (Math.abs(d) < 4 || Date.now() - wheelAt < 380) return;
     wheelAt = Date.now();
     turnPage(d > 0 ? 1 : -1);
+  }, { passive: false });
+  // At the end of a chapter, scrolling on fills a bar; once it is full the
+  // next chapter opens. A pause empties it, so a fling that merely reaches
+  // the end does not turn the chapter.
+  const PULL = 650;
+  let pull = 0;
+  let pullTimer = 0;
+  let endSince = 0;
+  const setPull = (v) => {
+    pull = v;
+    const box = content.querySelector(".pull-next");
+    if (!box) return;
+    box.classList.toggle("on", v > 0);
+    box.querySelector(".pull-fill").style.width = Math.min(100, (v / PULL) * 100) + "%";
+  };
+  content.addEventListener("scroll", () => {
+    const atEnd = content.scrollTop + content.clientHeight >= content.scrollHeight - 2;
+    if (!atEnd) {
+      endSince = 0;
+      if (pull) setPull(0);
+    } else if (!endSince) {
+      endSince = Date.now();
+    }
+  }, { passive: true });
+  let turnedAt = 0;
+  content.addEventListener("wheel", (e) => {
+    // The rest of the gesture must not scroll down the new chapter.
+    if (Date.now() - turnedAt < 600) {
+      e.preventDefault();
+      return;
+    }
+    if (isBook() || !state.book || state.chapter + 1 >= state.book.toc.length) return;
+    const atEnd = content.scrollTop + content.clientHeight >= content.scrollHeight - 2;
+    const dy = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? content.clientHeight : 1);
+    if (!atEnd || dy <= 0) {
+      if (pull) setPull(0);
+      return;
+    }
+    if (!endSince) endSince = Date.now();
+    // Let the scroll that reached the end settle first.
+    if (Date.now() - endSince < 250) return;
+    setPull(pull + Math.min(dy, 80));
+    clearTimeout(pullTimer);
+    if (pull >= PULL) {
+      setPull(0);
+      endSince = 0;
+      turnedAt = Date.now();
+      loadChapter(state.chapter + 1, { scroll: "top" });
+      return;
+    }
+    pullTimer = setTimeout(() => setPull(0), 600);
   }, { passive: false });
   new ResizeObserver(relayoutSoon).observe(content);
   document.fonts?.ready.then(relayoutSoon);
