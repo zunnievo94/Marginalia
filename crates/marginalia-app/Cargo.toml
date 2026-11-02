@@ -23,3 +23,5 @@ tauri-plugin-dialog = "2"
 marginalia-core.workspace = true
 marginalia-tts = { workspace = true, features = ["playback"] }
 tauri-plugin-updater = "2"
+tauri-plugin-single-instance = "2"
+ureq = { version = "3", features = ["platform-verifier"] }
