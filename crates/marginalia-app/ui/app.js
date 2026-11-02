@@ -707,6 +707,7 @@ function renderSettings(root) {
   check("hand_notes", "Handwritten margin notes");
   root.append(el(`<div class="section-header"><span class="grow">Read aloud</span></div>`));
   range("speed", "Speaking speed", 0.5, 2.5, 0.05, (v) => v.toFixed(2) + "×");
+  renderDesktopSettings(root);
   renderAiSettings(root);
   root.append(el(`<div class="section-header"><span class="grow">Updates</span></div>`));
   const upd = el(`<div class="setting update"><div class="update-line">Checking version…</div>
@@ -718,6 +719,48 @@ function renderSettings(root) {
     <kbd>←</kbd> <kbd>→</kbd> chapters (pages in the book layout) · <kbd>Ctrl</kbd> <kbd>B</kbd> side bar ·
     <kbd>Ctrl</kbd> <kbd>O</kbd> open · <kbd>Ctrl</kbd> <kbd>+</kbd>/<kbd>-</kbd> font size.
     Double-click a sentence to read aloud from there.</div>`));
+}
+
+// ------------------------------------------------------------- desktop
+
+// Linux: is Marginalia in the application menu? An AppImage adds itself;
+// this shows it and lets the reader add or remove it.
+async function renderDesktopSettings(root) {
+  const box = el(`<div class="desktop-settings"></div>`);
+  root.append(box);
+  const status = await invoke("desktop_status").catch(() => null);
+  if (!status) return;
+  const draw = (st) => {
+    box.replaceChildren(el(`<div class="section-header"><span class="grow">Desktop</span></div>`));
+    const n = el(`<div class="setting"><div class="update-line"></div><button class="btn small"></button></div>`);
+    const line = n.querySelector(".update-line");
+    const btn = n.querySelector("button");
+    if (!st.appimage) {
+      line.textContent = st.launcher
+        ? "Marginalia is in the application menu (added by its package)."
+        : "Marginalia is not in the application menu. Install the .deb or run the AppImage to add it.";
+      btn.remove();
+    } else {
+      line.textContent = st.launcher
+        ? "Marginalia is in the application menu, with its icon, and opens books you double-click."
+        : "Marginalia is not in the application menu.";
+      btn.textContent = st.launcher ? "Remove from the menu" : "Add to the application menu";
+      btn.onclick = async () => {
+        btn.disabled = true;
+        const on = !st.launcher;
+        const next = await call("desktop_set_menu", { on }).catch(() => null);
+        if (next) {
+          state.settings.app_menu = on;
+          toast(on ? "Added to the application menu." : "Removed from the application menu.");
+          draw(next);
+        } else {
+          btn.disabled = false;
+        }
+      };
+    }
+    box.append(n);
+  };
+  draw(status);
 }
 
 // ------------------------------------------------------------------ AI
