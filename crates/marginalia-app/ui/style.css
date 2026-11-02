@@ -1530,3 +1530,28 @@ body.layout-book .reading p.bookmarked::before { display: none; }
 .term-row .term { min-width: 0; }
 .term-row select { width: auto; }
 .term-row .variants { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.4; }
+
+/* Scrolling on at the end of a chapter: the bar to the next one. */
+.pull-next {
+  position: sticky;
+  bottom: 14px;
+  width: min(420px, calc(100% - 32px));
+  margin: 0 auto 14px;
+  padding: 10px 14px 12px;
+  background: var(--raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font: 12px/1.4 var(--ui-font);
+  color: var(--muted);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 160ms var(--ease), transform 160ms var(--ease);
+  pointer-events: none;
+}
+.pull-next.on { opacity: 1; transform: none; }
+.pull-label { margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pull-label b { color: var(--text); font-weight: 600; }
+.pull-track { height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.pull-fill { width: 0; height: 100%; background: var(--accent); transition: width 90ms linear; }
+@media (prefers-reduced-motion: reduce) { .pull-next, .pull-fill { transition: none; } }
